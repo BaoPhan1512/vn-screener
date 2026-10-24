@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bộ lọc cổ phiếu VN</title>
+  <meta name="description" content="Lọc cổ phiếu Việt Nam realtime theo điều kiện kỹ thuật" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232962ff'/><path d='M6 22l6-7 5 4 9-11' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <script>
+    try { const t = localStorage.getItem("vns.theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="brand">
+        <span class="logo"></span>
+        <div class="screen-menu">
+          <button id="screenBtn" class="screen-name" title="Chọn bộ lọc đã lưu"><span id="screenName">Bộ lọc</span><span id="dirty" hidden>*</span> ▾</button>
+          <div id="screenMenu" class="menu" hidden></div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="status" class="status"></span>
+        <button id="saveBtn" class="btn" title="Lưu bộ lọc">Lưu</button>
+        <button id="shareBtn" class="btn" title="Sao chép link chia sẻ bộ lọc">Chia sẻ</button>
+        <button id="themeBtn" class="icon-btn" title="Sáng / tối"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+        <button id="settingsBtn" class="icon-btn" title="Cài đặt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <section class="filters">
+      <div class="seg" id="exchanges">
+        <button data-ex="HOSE">HOSE</button><button data-ex="HNX">HNX</button><button data-ex="UPCOM">UPCOM</button>
+      </div>
+      <button id="watchOnly" class="chip-btn" title="Chỉ hiện mã trong danh sách theo dõi">★ Theo dõi</button>
+      <div id="chips" class="chips"></div>
+      <button id="addFilter" class="add-btn" title="Thêm điều kiện">＋</button>
+    </section>
+
+    <nav class="tabs" id="tabs"></nav>
+
+    <main class="split">
+      <div class="table-wrap" id="tableWrap">
+        <table class="grid" id="grid">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+        <div id="empty" class="empty" hidden></div>
+      </div>
+      <aside class="chart-panel" id="chartPanel" hidden></aside>
+    </main>
+  </div>
+
+  <div id="popover" class="popover" hidden></div>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>Cài đặt</h2>
+      <label>Địa chỉ Cloudflare Worker
+        <input name="workerUrl" type="url" placeholder="https://vn-proxy.ten-ban.workers.dev" />
+        <small>Cầu nối lấy giá realtime từ DNSE. Xem hướng dẫn trong README.</small>
+      </label>
+      <label>Chu kỳ cập nhật (giây)
+        <input name="interval" type="number" min="5" max="300" />
+      </label>
+      <label>Chỉ cập nhật realtime mã có KL trung bình 20 phiên ≥
+        <input name="minAvgVol" type="text" />
+        <small>Giảm số mã cần tải để nhanh hơn. Ví dụ: 10K, 50K. Nhập 0 để lấy tất cả.</small>
+      </label>
+      <label class="check"><input name="notify" type="checkbox" /> Thông báo khi có mã mới lọt vào bộ lọc</label>
+      <div class="form-actions">
+        <button value="cancel" class="btn">Huỷ</button>
+        <button value="ok" class="btn primary">Lưu</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

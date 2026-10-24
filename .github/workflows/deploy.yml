@@ -1,0 +1,68 @@
+# Tải dữ liệu cuối ngày + build website + đưa lên GitHub Pages.
+# Chạy: mỗi lần cập nhật code, 16:20 các ngày thứ 2-6 (giờ VN), hoặc bấm tay trong tab Actions.
+name: Cập nhật dữ liệu & website
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "20 9 * * 1-5" # 09:20 UTC = 16:20 giờ Việt Nam
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lấy dữ liệu lần trước (dự phòng khi nguồn lỗi)
+        run: |
+          mkdir -p prev
+          BASE="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data"
+          curl -sfL "$BASE/meta.json" -o prev/meta.json || rm -f prev/meta.json
+          curl -sfL "$BASE/history.json" -o prev/history.json || rm -f prev/history.json
+          ls -la prev
+
+      - name: Tải dữ liệu cuối ngày
+        continue-on-error: true
+        run: python scripts/build_data.py --out web/public/data --prev prev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build website
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

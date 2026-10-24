@@ -20,7 +20,8 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 
 VN_TZ = timezone(timedelta(hours=7))
@@ -52,6 +53,15 @@ def note(source, ok, msg=""):
     else:
         st["fail"] += 1
         st["lastError"] = str(msg)[:300]
+
+
+def write_status(out):
+    try:
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "status.json"), "w", encoding="utf-8") as f:
+            json.dump(STATUS, f, ensure_ascii=False, indent=1)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_json(url, headers=None, retries=2, timeout=12):
@@ -331,7 +341,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--prev", help="thư mục chứa dữ liệu lần trước")
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--history-budget", type=float, default=15, help="số phút tối đa để tải giá lịch sử")
     ap.add_argument("--worker-url", default=os.environ.get("WORKER_URL", ""),
                     help="Cloudflare Worker dùng dự phòng khi DNSE chặn máy chủ GitHub")
     ap.add_argument("--fundamentals-days", type=int, default=7,
@@ -340,6 +351,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     probes = run_probes()
+    write_status(args.out)
     vnd_ok = probes["vndirect_api_finfo"]["ok"] or probes["vndirect_finfo_api"]["ok"]
     if not vnd_ok:
         FINFO_STATE["consecutive_fail"] = 999  # bỏ qua VNDirect ngay từ đầu
@@ -361,16 +373,30 @@ def main():
     hist, failed = {}, []
 
     worker = args.worker_url.rstrip("/")
-    try:
-        fetch_history("FPT")
-        note("dnse_direct", True)
-        log("[history] gọi trực tiếp DNSE: OK")
-    except Exception as e:  # noqa: BLE001
-        note("dnse_direct", False, e)
-        log(f"[history] gọi trực tiếp DNSE lỗi: {e}")
-        if worker:
+
+    # Đo thử: gọi trực tiếp DNSE và gọi qua Worker, chọn đường nhanh + ổn định hơn
+    def bench(via_worker, sample=("FPT", "VNM", "HPG", "SSI", "MWG", "ACB", "VCB", "PNJ")):
+        ok, t0 = 0, time.time()
+        for sym in sample:
+            try:
+                url = (f"{worker}/ohlc?" if via_worker else f"{DNSE_CHART}?") + \
+                      f"symbol={sym}&resolution=1D&from={_now() - 30 * 86400}&to={_now()}"
+                get_json(url, retries=1, timeout=10)
+                ok += 1
+            except Exception as e:  # noqa: BLE001
+                note("worker" if via_worker else "dnse_direct", False, e)
+        return {"ok": ok, "of": len(sample), "sec": round(time.time() - t0, 1)}
+
+    direct = bench(False)
+    STATUS["benchDirect"] = direct
+    log(f"[history] đo DNSE trực tiếp: {direct}")
+    if worker:
+        via = bench(True)
+        STATUS["benchWorker"] = via
+        log(f"[history] đo qua Worker: {via}")
+        if via["ok"] > direct["ok"] or (via["ok"] == direct["ok"] and via["sec"] < direct["sec"] * 0.7):
             HIST_STATE["via_worker"] = True
-            log(f"[history] chuyển sang dùng Worker {worker}")
+    log(f"[history] dùng {'Worker' if HIST_STATE['via_worker'] else 'DNSE trực tiếp'}")
 
     def job(sym):
         try:
@@ -378,21 +404,60 @@ def main():
         except Exception as e:  # noqa: BLE001
             return sym, e
 
+    # Tải song song, có giới hạn thời gian: hết giờ thì giữ phần đã tải + dữ liệu cũ
     t0 = time.time()
-    with ThreadPoolExecutor(args.workers) as ex:
-        for i, (sym, res) in enumerate(ex.map(job, sorted(symbols))):
+    deadline = t0 + args.history_budget * 60
+    pending = sorted(symbols)
+    recent = []
+    ex = ThreadPoolExecutor(args.workers)
+    futures = {ex.submit(job, sym): sym for sym in pending}
+    done_count = 0
+    no_data = set()
+    try:
+        for fut in as_completed(futures, timeout=max(1, deadline - time.time())):
+            sym, res = fut.result()
+            done_count += 1
             if isinstance(res, dict):
                 hist[sym] = res
+                recent.append(1)
             elif res is None:
-                pass  # mã không có giao dịch
+                no_data.add(sym)  # mã không có giao dịch
+                recent.append(1)
             else:
                 failed.append(sym)
-                if sym in prev_hist.get("data", {}):
-                    hist[sym] = prev_hist["data"][sym]
-            if i % 200 == 0:
-                log(f"[history] {i}/{len(symbols)} ({time.time() - t0:.0f}s)")
+                recent.append(0)
+            recent = recent[-100:]
+            # lỗi nhiều khi gọi trực tiếp -> chuyển sang Worker cho phần còn lại
+            if (not HIST_STATE["via_worker"] and worker and len(recent) >= 50
+                    and sum(recent) / len(recent) < 0.7):
+                HIST_STATE["via_worker"] = True
+                log("[history] lỗi nhiều, chuyển sang Worker")
+            if done_count % 200 == 0:
+                log(f"[history] {done_count}/{len(pending)} ({time.time() - t0:.0f}s), lỗi {len(failed)}")
+    except FuturesTimeout:
+        log(f"[history] hết thời gian ({args.history_budget} phút), dừng ở {done_count}/{len(pending)}")
+        STATUS["historyTimedOut"] = True
+    ex.shutdown(wait=False, cancel_futures=True)
+
+    # thử lại các mã lỗi (qua Worker nếu có) khi còn thời gian
+    retry = [x for x in failed if x not in hist]
+    if retry and worker and time.time() < deadline:
+        HIST_STATE["via_worker"] = True
+        log(f"[history] thử lại {len(retry)} mã qua Worker")
+        with ThreadPoolExecutor(args.workers) as ex2:
+            for sym, res in ex2.map(job, retry):
+                if isinstance(res, dict):
+                    hist[sym] = res
+    for sym in pending:
+        if sym not in hist and sym in prev_hist.get("data", {}):
+            hist[sym] = prev_hist["data"][sym]
+    failed = [x for x in pending if x not in hist and x not in no_data]
+    STATUS["noData"] = len(no_data)
+    STATUS["historySeconds"] = round(time.time() - t0)
+    write_status(args.out)
     log(f"[history] xong {len(hist)} mã, lỗi {len(failed)}: {failed[:20]}")
     STATUS["history"] = {"symbols": len(hist), "failed": len(failed), "viaWorker": HIST_STATE["via_worker"]}
+    STATUS["sampleFailed"] = failed[:30]
     if len(hist) < 100:
         log("LỖI: lấy giá lịch sử thất bại (có thể nguồn DNSE chặn máy chủ nước ngoài)")
         if prev_hist.get("data"):

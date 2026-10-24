@@ -39,6 +39,9 @@ jobs:
 
       - name: Tải dữ liệu cuối ngày
         continue-on-error: true
+        timeout-minutes: 30
+        env:
+          WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
         run: python scripts/build_data.py --out web/public/data --prev prev
 
       - uses: actions/setup-node@v4

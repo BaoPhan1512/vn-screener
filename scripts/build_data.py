@@ -42,7 +42,19 @@ def log(*a):
     print(*a, flush=True)
 
 
-def get_json(url, headers=None, retries=3, timeout=20):
+STATUS = {"sources": {}, "errors": []}
+
+
+def note(source, ok, msg=""):
+    st = STATUS["sources"].setdefault(source, {"ok": 0, "fail": 0, "lastError": ""})
+    if ok:
+        st["ok"] += 1
+    else:
+        st["fail"] += 1
+        st["lastError"] = str(msg)[:300]
+
+
+def get_json(url, headers=None, retries=2, timeout=12):
     last = None
     for i in range(retries):
         try:
@@ -55,13 +67,24 @@ def get_json(url, headers=None, retries=3, timeout=20):
     raise RuntimeError(f"{url}: {last}")
 
 
+FINFO_STATE = {"consecutive_fail": 0}
+
+
 def finfo(path):
+    # Ngắt sớm nếu VNDirect liên tục lỗi (vd chặn máy chủ nước ngoài) để không treo cả quy trình
+    if FINFO_STATE["consecutive_fail"] >= 15:
+        raise RuntimeError("VNDirect bị bỏ qua do lỗi liên tục")
     last = None
     for host in FINFO_HOSTS:
         try:
-            return get_json(host + path, FINFO_HEADERS)
+            d = get_json(host + path, FINFO_HEADERS)
+            FINFO_STATE["consecutive_fail"] = 0
+            note("vndirect", True)
+            return d
         except Exception as e:  # noqa: BLE001
             last = e
+    FINFO_STATE["consecutive_fail"] += 1
+    note("vndirect", False, last)
     raise RuntimeError(last)
 
 
@@ -94,6 +117,13 @@ def fetch_symbols():
     except Exception as e:  # noqa: BLE001
         log(f"[symbols] /v4/stocks lỗi: {e}")
     if len(out) < 500:
+        try:
+            out.update({k: v for k, v in fetch_symbols_vci().items() if k not in out})
+            log(f"[symbols] sau khi thêm nguồn Vietcap: {len(out)} mã")
+        except Exception as e:  # noqa: BLE001
+            log(f"[symbols] Vietcap lỗi: {e}")
+            note("vietcap", False, e)
+    if len(out) < 500:
         for floor in FLOORS:
             try:
                 q = urllib.parse.quote(f"floor:{floor}")
@@ -108,11 +138,34 @@ def fetch_symbols():
     return out
 
 
+def fetch_symbols_vci():
+    d = get_json("https://trading.vietcap.com.vn/api/price/symbols/getAll", {
+        "User-Agent": UA, "Accept": "application/json",
+        "Origin": "https://trading.vietcap.com.vn", "Referer": "https://trading.vietcap.com.vn/"})
+    rows = d.get("data", d) if isinstance(d, dict) else d
+    board_map = {"HSX": "HOSE", "HOSE": "HOSE", "HNX": "HNX", "UPCOM": "UPCOM"}
+    out = {}
+    for r in rows:
+        code = str(r.get("symbol", "")).upper()
+        floor = board_map.get(str(r.get("board", r.get("exchange", ""))).upper())
+        typ = str(r.get("type", "STOCK")).upper()
+        if len(code) == 3 and floor and typ == "STOCK":
+            out[code] = {"n": r.get("organShortName") or r.get("organName") or code, "e": floor}
+    note("vietcap", bool(out), "" if out else "rỗng")
+    return out
+
+
 # ---------------------------------------------------------------- giá lịch sử
-def fetch_history(symbol, days=420):
+HIST_STATE = {"via_worker": False}
+
+
+def fetch_history(symbol, days=420, worker=None):
     now = int(time.time())
-    url = f"{DNSE_CHART}?symbol={symbol}&resolution=1D&from={now - days * 86400}&to={now + 86400}"
-    d = get_json(url)
+    q = f"symbol={symbol}&resolution=1D&from={now - days * 86400}&to={now + 86400}"
+    if HIST_STATE["via_worker"] and worker:
+        d = get_json(f"{worker}/ohlc?{q}")
+    else:
+        d = get_json(f"{DNSE_CHART}?{q}")
     t, c, h, l, v = d.get("t") or [], d.get("c") or [], d.get("h") or [], d.get("l") or [], d.get("v") or []
     rows = [(t[i], c[i], h[i], l[i], v[i]) for i in range(len(t)) if c[i] is not None]
     rows = rows[-BARS:]
@@ -153,6 +206,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--prev", help="thư mục chứa dữ liệu lần trước")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--worker-url", default=os.environ.get("WORKER_URL", ""),
+                    help="Cloudflare Worker dùng dự phòng khi DNSE chặn máy chủ GitHub")
     ap.add_argument("--fundamentals-days", type=int, default=7,
                     help="bao nhiêu ngày thì tải lại chỉ số cơ bản")
     args = ap.parse_args()
@@ -173,9 +228,21 @@ def main():
     # giá lịch sử
     hist, failed = {}, []
 
+    worker = args.worker_url.rstrip("/")
+    try:
+        fetch_history("FPT")
+        note("dnse_direct", True)
+        log("[history] gọi trực tiếp DNSE: OK")
+    except Exception as e:  # noqa: BLE001
+        note("dnse_direct", False, e)
+        log(f"[history] gọi trực tiếp DNSE lỗi: {e}")
+        if worker:
+            HIST_STATE["via_worker"] = True
+            log(f"[history] chuyển sang dùng Worker {worker}")
+
     def job(sym):
         try:
-            return sym, fetch_history(sym)
+            return sym, fetch_history(sym, worker=worker)
         except Exception as e:  # noqa: BLE001
             return sym, e
 
@@ -193,6 +260,7 @@ def main():
             if i % 200 == 0:
                 log(f"[history] {i}/{len(symbols)} ({time.time() - t0:.0f}s)")
     log(f"[history] xong {len(hist)} mã, lỗi {len(failed)}: {failed[:20]}")
+    STATUS["history"] = {"symbols": len(hist), "failed": len(failed), "viaWorker": HIST_STATE["via_worker"]}
     if len(hist) < 100:
         log("LỖI: lấy giá lịch sử thất bại (có thể nguồn DNSE chặn máy chủ nước ngoài)")
         if prev_hist.get("data"):
@@ -233,6 +301,8 @@ def main():
                 got += 1
             meta_syms[sym] = m
         log(f"[ratios] có dữ liệu cho {got}/{len(hist)} mã")
+        if got == 0:
+            fundamentals_at = None  # lỗi toàn bộ -> lần chạy sau thử lại
 
     now = datetime.now(VN_TZ).isoformat(timespec="seconds")
     with open(os.path.join(args.out, "history.json"), "w", encoding="utf-8") as f:
@@ -240,8 +310,21 @@ def main():
     with open(os.path.join(args.out, "meta.json"), "w", encoding="utf-8") as f:
         json.dump({"updatedAt": now, "fundamentalsAt": fundamentals_at, "symbols": meta_syms},
                   f, separators=(",", ":"), ensure_ascii=False)
+    STATUS["updatedAt"] = now
+    STATUS["symbols"] = len(symbols)
+    STATUS["withFundamentals"] = sum(1 for m in meta_syms.values() if "sh" in m)
+    with open(os.path.join(args.out, "status.json"), "w", encoding="utf-8") as f:
+        json.dump(STATUS, f, ensure_ascii=False, indent=1)
     log(f"Hoàn tất: {len(hist)} mã -> {args.out}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # luôn ghi file chẩn đoán để kiểm tra nguồn nào lỗi
+        out = next((sys.argv[i + 1] for i, x in enumerate(sys.argv[:-1]) if x == "--out"), None)
+        if out and not os.path.exists(os.path.join(out, "status.json")):
+            os.makedirs(out, exist_ok=True)
+            with open(os.path.join(out, "status.json"), "w", encoding="utf-8") as f:
+                json.dump(STATUS, f, ensure_ascii=False, indent=1)

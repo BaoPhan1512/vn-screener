@@ -124,6 +124,13 @@ def fetch_symbols():
             log(f"[symbols] Vietcap lỗi: {e}")
             note("vietcap", False, e)
     if len(out) < 500:
+        try:
+            out.update({k: v for k, v in fetch_symbols_ssi().items() if k not in out})
+            log(f"[symbols] sau khi thêm nguồn SSI: {len(out)} mã")
+        except Exception as e:  # noqa: BLE001
+            log(f"[symbols] SSI lỗi: {e}")
+            note("ssi", False, e)
+    if len(out) < 500:
         for floor in FLOORS:
             try:
                 q = urllib.parse.quote(f"floor:{floor}")
@@ -152,6 +159,21 @@ def fetch_symbols_vci():
         if len(code) == 3 and floor and typ == "STOCK":
             out[code] = {"n": r.get("organShortName") or r.get("organName") or code, "e": floor}
     note("vietcap", bool(out), "" if out else "rỗng")
+    return out
+
+
+def fetch_symbols_ssi():
+    out = {}
+    hdr = {"User-Agent": UA, "Accept": "application/json",
+           "Origin": "https://iboard.ssi.com.vn", "Referer": "https://iboard.ssi.com.vn/"}
+    for floor, path in (("HOSE", "hose"), ("HNX", "hnx"), ("UPCOM", "upcom")):
+        d = get_json(f"https://iboard-query.ssi.com.vn/stock/exchange/{path}", hdr, retries=1)
+        rows = d.get("data", d) if isinstance(d, dict) else d
+        for r in rows or []:
+            code = str(r.get("stockSymbol") or r.get("ss") or r.get("symbol") or "").upper()
+            if len(code) == 3 and code.isalpha():
+                out[code] = {"n": r.get("companyNameVi") or r.get("companyNameEn") or code, "e": floor}
+    note("ssi", bool(out), "" if out else "rỗng")
     return out
 
 
@@ -188,16 +210,120 @@ def fetch_history(symbol, days=420, worker=None):
 RATIOS = {"OUTSTANDING_SHARES": "sh", "PRICE_TO_EARNINGS": "pe", "DIVIDEND_YIELD": "dy"}
 
 
-def fetch_ratios(symbol):
-    out = {}
-    for code, key in RATIOS.items():
-        q = urllib.parse.quote(f"code:{symbol}~ratioCode:{code}")
+
+# ---------------------------------------------------------------- dò nguồn dữ liệu
+# Thử nhanh các nguồn miễn phí để biết nguồn nào truy cập được từ máy chủ đang chạy.
+# Kết quả ghi vào status.json (mục "probes").
+def _now():
+    return int(time.time())
+
+
+PROBES = {
+    "dnse_chart": lambda: f"{DNSE_CHART}?symbol=FPT&resolution=1D&from={_now() - 10 * 86400}&to={_now()}",
+    "vndirect_api_finfo": lambda: "https://api-finfo.vndirect.com.vn/v4/stocks?q=code:FPT",
+    "vndirect_finfo_api": lambda: "https://finfo-api.vndirect.com.vn/v4/stocks?q=code:FPT",
+    "vietcap_symbols": lambda: "https://trading.vietcap.com.vn/api/price/symbols/getAll",
+    "ssi_stock": lambda: "https://iboard-query.ssi.com.vn/stock/FPT",
+    "ssi_exchange": lambda: "https://iboard-query.ssi.com.vn/stock/exchange/hose",
+    "cafef_ratio": lambda: ("https://cafef.vn/du-lieu/Ajax/PageNew/GetDataChiSoTaiChinh.ashx?Symbol=FPT"
+                            "&TotalRow=1&EndDate=2026&ReportType=QUY&Sort=DESC"),
+}
+PROBE_HEADERS = {
+    "vietcap_symbols": {"Origin": "https://trading.vietcap.com.vn", "Referer": "https://trading.vietcap.com.vn/"},
+    "ssi_stock": {"Origin": "https://iboard.ssi.com.vn", "Referer": "https://iboard.ssi.com.vn/"},
+    "ssi_exchange": {"Origin": "https://iboard.ssi.com.vn", "Referer": "https://iboard.ssi.com.vn/"},
+    "cafef_ratio": {"Referer": "https://cafef.vn/"},
+    "vndirect_api_finfo": FINFO_HEADERS,
+    "vndirect_finfo_api": FINFO_HEADERS,
+}
+
+
+def _shape(o, depth=0):
+    """Mô tả ngắn cấu trúc JSON (tên trường) để biết cách đọc dữ liệu."""
+    if depth > 2:
+        return "…"
+    if isinstance(o, dict):
+        return {k: _shape(v, depth + 1) for k, v in list(o.items())[:40]}
+    if isinstance(o, list):
+        return [_shape(o[0], depth + 1), f"({len(o)} phần tử)"] if o else []
+    return o if isinstance(o, (int, float)) or o is None else str(o)[:40]
+
+
+def probe_one(name):
+    url = PROBES[name]()
+    t0 = time.time()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json",
+                                                   **PROBE_HEADERS.get(name, {})})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = r.read()
+        res = {"ok": True, "status": 200, "ms": int((time.time() - t0) * 1000)}
         try:
-            data = finfo(f"/v4/ratios?q={q}&sort=reportDate:desc&size=1")["data"]
-            if data and data[0].get("value") is not None:
-                out[key] = data[0]["value"]
+            res["shape"] = _shape(json.loads(body.decode("utf-8")))
         except Exception:  # noqa: BLE001
-            pass
+            res["text"] = body[:200].decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        res = {"ok": False, "status": e.code, "ms": int((time.time() - t0) * 1000)}
+    except Exception as e:  # noqa: BLE001
+        res = {"ok": False, "error": str(e)[:200], "ms": int((time.time() - t0) * 1000)}
+    return name, res
+
+
+def run_probes():
+    with ThreadPoolExecutor(len(PROBES)) as ex:
+        STATUS["probes"] = dict(ex.map(probe_one, PROBES))
+    for k, v in STATUS["probes"].items():
+        log(f"[probe] {k}: {'OK' if v['ok'] else 'LỖI'} {v.get('status', '')} {v.get('error', '')} {v['ms']}ms")
+    return STATUS["probes"]
+
+
+# ---------------------------------------------------------------- chỉ số cơ bản dự phòng: CafeF + SSI
+SSI_HEADERS = {"User-Agent": UA, "Accept": "application/json",
+               "Origin": "https://iboard.ssi.com.vn", "Referer": "https://iboard.ssi.com.vn/"}
+
+
+def fetch_ratios_alt(symbol):
+    out = {}
+    try:
+        d = get_json(f"https://iboard-query.ssi.com.vn/stock/{symbol}", SSI_HEADERS, retries=1)
+        sh = (d.get("data") or {}).get("listedShare")
+        if sh:
+            out["sh"] = sh
+        note("ssi", True)
+    except Exception as e:  # noqa: BLE001
+        note("ssi", False, e)
+    try:
+        y = datetime.now(VN_TZ).year
+        d = get_json(f"https://cafef.vn/du-lieu/Ajax/PageNew/GetDataChiSoTaiChinh.ashx?Symbol={symbol}"
+                     f"&TotalRow=1&EndDate={y}&ReportType=QUY&Sort=DESC",
+                     {"User-Agent": UA, "Referer": "https://cafef.vn/"}, retries=1)
+        periods = ((d.get("Data") or {}).get("Value")) or []
+        if periods:
+            vals = {x.get("Code"): x.get("Value") for x in periods[0].get("Value") or []}
+            if vals.get("EPS"):
+                out["eps_raw"] = vals["EPS"] * 1000 if abs(vals["EPS"]) < 1000 else vals["EPS"]  # CafeF: nghìn đồng
+            if vals.get("PE"):
+                out["pe"] = vals["PE"]
+        note("cafef", True)
+    except Exception as e:  # noqa: BLE001
+        note("cafef", False, e)
+    return out
+
+
+def fetch_ratios_bulk(symbols, chunk=100):
+    """VNDirect: lấy chỉ số mới nhất cho 100 mã mỗi lần gọi."""
+    out = {}
+    codes = ",".join(RATIOS)
+    for i in range(0, len(symbols), chunk):
+        part = symbols[i:i + chunk]
+        try:
+            d = finfo(f"/v4/ratios/latest?filter=ratioCode:{codes}&where=code:{','.join(part)}"
+                      f"&order=reportDate&fields=ratioCode,value,code")
+            for r in d.get("data") or []:
+                if r.get("value") is not None and r.get("ratioCode") in RATIOS:
+                    out.setdefault(r["code"], {})[RATIOS[r["ratioCode"]]] = r["value"]
+        except Exception as e:  # noqa: BLE001
+            log(f"[ratios] lô {i // chunk} lỗi: {e}")
     return out
 
 
@@ -212,6 +338,12 @@ def main():
                     help="bao nhiêu ngày thì tải lại chỉ số cơ bản")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+
+    probes = run_probes()
+    vnd_ok = probes["vndirect_api_finfo"]["ok"] or probes["vndirect_finfo_api"]["ok"]
+    if not vnd_ok:
+        FINFO_STATE["consecutive_fail"] = 999  # bỏ qua VNDirect ngay từ đầu
+        log("[probe] VNDirect không truy cập được -> dùng nguồn dự phòng")
 
     prev_meta = load_prev(args.prev, "meta.json") or {}
     prev_hist = load_prev(args.prev, "history.json") or {}
@@ -285,8 +417,19 @@ def main():
     else:
         log("[ratios] tải chỉ số cơ bản...")
         fundamentals_at = datetime.now(VN_TZ).isoformat(timespec="seconds")
-        with ThreadPoolExecutor(args.workers) as ex:
-            ratios = dict(zip(sorted(hist), ex.map(fetch_ratios, sorted(hist))))
+        ratios = fetch_ratios_bulk(sorted(hist)) if vnd_ok else {}
+        STATUS["fundamentalsSource"] = "vndirect" if ratios else None
+        missing = [x for x in sorted(hist) if x not in ratios]
+        alt_ok = probes["cafef_ratio"]["ok"] or probes["ssi_stock"]["ok"]
+        # bổ sung mã thiếu (hoặc toàn bộ nếu VNDirect lỗi) từ nguồn dự phòng
+        if missing and alt_ok and (not ratios or len(missing) <= 600):
+            log(f"[ratios] lấy bổ sung {len(missing)} mã từ CafeF + SSI")
+            with ThreadPoolExecutor(args.workers) as ex:
+                for sym, r in zip(missing, ex.map(fetch_ratios_alt, missing)):
+                    if r:
+                        ratios[sym] = r
+            STATUS["fundamentalsSource"] = (STATUS["fundamentalsSource"] or "") + "+cafef/ssi"
+        log(f"[ratios] nguồn: {STATUS['fundamentalsSource']}")
         got = 0
         for sym in hist:
             m = dict(symbols.get(sym, {"n": sym, "e": ""}))
@@ -295,7 +438,10 @@ def main():
                 r = {k: prev_syms[sym][k] for k in ("sh", "pe", "dy") if k in prev_syms[sym]}
             m.update(r)
             pe = m.get("pe")
-            if pe and pe > 0:
+            eps_raw = m.pop("eps_raw", None)
+            if eps_raw and eps_raw > 0:
+                m["eps"] = round(eps_raw, 2)
+            elif pe and pe > 0:
                 m["eps"] = round(hist[sym]["c"][-1] / pe, 2)
             if r:
                 got += 1

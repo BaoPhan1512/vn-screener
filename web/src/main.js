@@ -412,7 +412,8 @@ function renderTable(cols) {
   const maxRows = 500;
   for (const r of state.rows.slice(0, maxRows)) {
     const chg = r.vals.chg ?? r.vals[operandKey(F("chg"))];
-    const pc = priceClass(chg, r.meta.e);
+    const lv = store.live[r.sym];
+    const pc = lv?.ce && lv.c >= lv.ce ? "ceil" : lv?.fl && lv.c <= lv.fl ? "floor" : priceClass(chg, r.meta.e);
     const isNew = state.newSince.has(r.sym);
     const cells = cols.map((c) => {
       const k = operandKey(c);
@@ -518,7 +519,7 @@ async function poll(force) {
     polling = true;
     const syms = universe();
     setStatus(`Đang cập nhật ${syms.length} mã…`, "busy");
-    const res = await refreshLive(syms, () => {});
+    const res = await refreshLive(syms, () => {}, state.screen.exchanges);
     polling = false;
     if (!state.polledOnce && res.ok) { state.prevSet = null; state.polledOnce = true; }
     compute(true);
@@ -545,7 +546,7 @@ function updateStatus(res, n) {
     return;
   }
   hideBanner();
-  if (open) setStatus(`● Realtime · ${t || "—"} · ${n} mã`, "live");
+  if (open) setStatus(`● Realtime · ${t || "—"} · ${store.source === "SSI" ? res?.ok ?? n : n} mã · ${store.source || ""}`, "live");
   else {
     const anySym = Object.keys(store.live)[0] || Object.keys(store.history)[0];
     const d = anySym ? lastDate(anySym) : null;

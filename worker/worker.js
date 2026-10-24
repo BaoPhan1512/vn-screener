@@ -8,8 +8,11 @@
 //       -> nến (định dạng t,o,h,l,c,v của DNSE)
 //   GET /snapshot?symbols=FPT,VNM,...  (tối đa 45 mã / lần)
 //       -> nến ngày hôm nay + giá đóng cửa hôm trước của từng mã
+//   GET /board?ex=hose|hnx|upcom
+//       -> bảng giá cả sàn trong 1 lần gọi (nguồn SSI iBoard), giá theo đồng
 
 const DNSE = "https://services.entrade.com.vn/chart-api/v2/ohlcs";
+const SSI_BOARD = "https://iboard-query.ssi.com.vn/stock/exchange";
 const MAX_SYMBOLS = 45; // gói miễn phí giới hạn 50 request con mỗi lượt
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -70,6 +73,33 @@ async function handleSnapshot(params) {
   return json({ time: now, data: out }, 200, 3);
 }
 
+async function handleBoard(params) {
+  const ex = (params.get("ex") || "").toLowerCase();
+  if (!["hose", "hnx", "upcom"].includes(ex)) return json({ error: "ex phải là hose, hnx hoặc upcom" }, 400);
+  const r = await fetch(`${SSI_BOARD}/${ex}`, {
+    headers: { "User-Agent": UA, Accept: "application/json", Origin: "https://iboard.ssi.com.vn", Referer: "https://iboard.ssi.com.vn/" },
+  });
+  if (!r.ok) throw new Error(`SSI ${r.status}`);
+  const d = await r.json();
+  // Rút gọn: chỉ giữ cổ phiếu (bỏ chứng quyền, ETF...) và các trường cần thiết
+  const rows = (d.data || [])
+    .filter((x) => x.stockType === "s" && /^[A-Z]{3}$/.test(x.stockSymbol || ""))
+    .map((x) => ({
+      s: x.stockSymbol,
+      d: x.tradingDate,
+      c: x.matchedPrice || 0,
+      o: x.openPrice || 0,
+      h: x.highest || 0,
+      l: x.lowest || 0,
+      v: x.nmTotalTradedQty || 0,
+      r: x.refPrice || x.priorClosePrice || 0,
+      ce: x.ceiling || 0,
+      fl: x.floor || 0,
+      n: x.companyNameVi || "",
+    }));
+  return json({ time: Math.floor(Date.now() / 1000), ex, data: rows }, 200, 3);
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -84,7 +114,8 @@ export default {
     try {
       if (url.pathname === "/ohlc") res = await handleOhlc(url.searchParams);
       else if (url.pathname === "/snapshot") res = await handleSnapshot(url.searchParams);
-      else return json({ ok: true, routes: ["/ohlc", "/snapshot"] });
+      else if (url.pathname === "/board") res = await handleBoard(url.searchParams);
+      else return json({ ok: true, version: 2, routes: ["/ohlc", "/snapshot", "/board"] });
     } catch (e) {
       return json({ error: String(e.message || e) }, 502);
     }

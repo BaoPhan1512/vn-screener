@@ -118,8 +118,49 @@ async function fetchSnapshotBatch(symbols) {
   return out;
 }
 
-// Lấy giá trong phiên cho danh sách mã, chia lô và chạy song song
-export async function refreshLive(symbols, onProgress) {
+// Nguồn 1: bảng giá cả sàn từ SSI qua Worker (3 lần gọi cho toàn thị trường)
+let boardBrokenAt = 0;
+async function refreshBoard(exchanges) {
+  const s = settings();
+  if (!s.workerUrl || Date.now() - boardBrokenAt < 5 * 60 * 1000) return null;
+  let ok = 0;
+  const results = await Promise.allSettled(exchanges.map((ex) => getJson(`${s.workerUrl}/board?ex=${ex.toLowerCase()}`)));
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    for (const x of r.value.data || []) {
+      if (!x.r) continue;
+      const d = String(x.d || "");
+      const t = Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), 2) / 1000; // 9:00 giờ VN
+      if (!x.v || !x.c) {
+        // chưa có giao dịch trong phiên: chỉ ghi nhận giá tham chiếu
+        store.live[x.s] = { t, o: x.r, h: x.r, l: x.r, c: x.r, v: 0, pc: x.r, ce: x.ce, fl: x.fl, noTrade: true };
+      } else {
+        store.live[x.s] = { t, o: x.o || x.c, h: x.h || x.c, l: x.l || x.c, c: x.c, v: x.v, pc: x.r, ce: x.ce, fl: x.fl };
+      }
+      if (x.n && store.meta[x.s] && !store.meta[x.s].n) store.meta[x.s].n = x.n;
+      ok++;
+    }
+  }
+  if (!ok) {
+    boardBrokenAt = Date.now(); // Worker chưa hỗ trợ /board hoặc SSI chặn -> dùng DNSE, 5 phút sau thử lại
+    return null;
+  }
+  return { ok, failed: 0, source: "SSI" };
+}
+
+// Lấy giá trong phiên: ưu tiên bảng giá SSI, dự phòng DNSE từng lô mã
+export async function refreshLive(symbols, onProgress, exchanges = ["HOSE", "HNX", "UPCOM"]) {
+  const board = await refreshBoard(exchanges);
+  if (board) {
+    store.lastLiveAt = new Date();
+    store.source = "SSI";
+    return board;
+  }
+  store.source = "DNSE";
+  return refreshDnse(symbols, onProgress);
+}
+
+async function refreshDnse(symbols, onProgress) {
   const batchSize = settings().workerUrl ? 45 : 10;
   const batches = [];
   for (let i = 0; i < symbols.length; i += batchSize) batches.push(symbols.slice(i, i + batchSize));
@@ -156,7 +197,7 @@ export function barsFor(sym) {
   if (!h && !lv) return null;
   const c = h ? h.c.slice() : [], hi = h ? h.h.slice() : [], lo = h ? h.l.slice() : [], v = h ? h.v.slice() : [];
   const o = new Array(c.length).fill(null);
-  if (lv) {
+  if (lv && !lv.noTrade) {
     const d = vnDate(lv.t);
     const lastD = h?.d;
     if (!lastD || d > lastD) {

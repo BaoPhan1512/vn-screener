@@ -30,6 +30,8 @@ const CHATS = (process.env.TELEGRAM_CHAT_ID || "").split(/[,\s]+/).filter(Boolea
 const VN = 7 * 3600;
 
 const log = (...a) => console.log(...a);
+// Dòng "::error::" / "::warning::" hiện ở mục Annotations của lần chạy trên GitHub
+const note = (level, msg) => console.log(`::${level}::${String(msg).replace(/\n/g, " ")}`);
 const vnDate = (ts) => new Date((ts + VN) * 1000).toISOString().slice(0, 10);
 const todayVN = () => vnDate(Math.floor(Date.now() / 1000));
 const nowVN = () => new Date(Date.now() + VN * 1000).toISOString().slice(11, 16);
@@ -66,7 +68,7 @@ async function loadLive(symbols) {
   const raw = {};
   const batches = [];
   for (let i = 0; i < symbols.length; i += 45) batches.push(symbols.slice(i, i + 45));
-  let next = 0, failed = 0;
+  let next = 0, failed = 0, lastErr = "";
   async function worker() {
     while (next < batches.length) {
       const b = batches[next++];
@@ -75,11 +77,15 @@ async function loadLive(symbols) {
         Object.assign(raw, d.data || {});
       } catch (e) {
         failed += b.length;
+        lastErr = e.message;
         log("lỗi lô:", e.message);
       }
     }
   }
   await Promise.all(Array.from({ length: 4 }, worker));
+  // Ghi chú lên mục Annotations của GitHub để dễ biết nguyên nhân
+  if (lastErr.includes("401")) note("warning", "Worker từ chối mật khẩu (401): secret WORKER_KEY trên GitHub chưa khớp với ACCESS_KEY của Worker. Đang dùng dữ liệu cuối ngày thay cho giá realtime.");
+  else if (failed) note("warning", `Không lấy được giá realtime của ${failed} mã: ${lastErr}`);
   return { raw, failed };
 }
 
@@ -128,9 +134,12 @@ async function sendTelegram(text) {
       body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
     });
     const d = await r.json();
-    if (!d.ok) errors.push(`chat ${chat}: ${d.description}`);
+    if (!d.ok) errors.push(`chat id ${chat}: ${d.description}${d.error_code === 401 ? " (token bot sai hoặc đã bị thu hồi: kiểm tra secret TELEGRAM_BOT_TOKEN)" : d.error_code === 400 ? " (chat id sai, hoặc tài khoản đó chưa bấm START với bot)" : ""}`);
   }
-  if (errors.length) throw new Error("Telegram: " + errors.join("; "));
+  if (errors.length) {
+    for (const e of errors) note("error", "Telegram: " + e);
+    if (errors.length === CHATS.length) throw new Error("Không gửi được tin Telegram nào");
+  }
 }
 
 async function main() {
@@ -194,6 +203,7 @@ async function main() {
 }
 
 main().catch((e) => {
+  note("error", e.message || e);
   console.error(e);
   process.exit(1);
 });

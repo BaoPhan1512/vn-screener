@@ -128,12 +128,19 @@ async function sendTelegram(text) {
   // gửi tới từng người nhận; một người lỗi không ảnh hưởng người khác
   const errors = [];
   for (const chat of CHATS) {
-    const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
-    });
-    const d = await r.json();
+    const send = (id) =>
+      fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: id, text, parse_mode: "HTML", disable_web_page_preview: true }),
+      }).then((r) => r.json());
+    let d = await send(chat);
+    // Nhóm được nâng cấp thành supergroup: Telegram trả về id mới -> gửi lại và nhắc cập nhật secret
+    const newId = d.parameters?.migrate_to_chat_id;
+    if (!d.ok && newId) {
+      d = await send(newId);
+      note("warning", `Nhóm Telegram đã đổi chat id thành ${newId}. Hãy cập nhật secret TELEGRAM_CHAT_ID thay id cũ bằng ${newId}.`);
+    }
     if (!d.ok) errors.push(`chat id ${chat}: ${d.description}${d.error_code === 401 ? " (token bot sai hoặc đã bị thu hồi: kiểm tra secret TELEGRAM_BOT_TOKEN)" : d.error_code === 400 ? " (chat id sai, hoặc tài khoản đó chưa bấm START với bot)" : ""}`);
   }
   if (errors.length) {

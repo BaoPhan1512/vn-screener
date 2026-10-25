@@ -12,6 +12,9 @@ export const store = {
   lastLiveAt: null,
   scale: null,       // DNSE trả giá theo nghìn đồng -> nhân 1000
   directBlocked: false,
+  official: false, // Worker có khoá DNSE OpenAPI
+  directRest: null,
+  directRestError: "",
 };
 
 export function settings() {
@@ -67,10 +70,31 @@ async function getJson(url) {
   return r.json();
 }
 
+// Gọi thẳng REST chính thức của DNSE từ máy người dùng (ở Việt Nam) bằng yêu cầu Worker đã ký sẵn.
+// directRest: null = chưa thử, true = dùng được, false = không dùng được (vd DNSE không cho phép CORS)
+async function directOhlc(s, symbol, resolution, from, to, kind) {
+  const q = `symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}&type=${kind === "index" ? "INDEX" : "STOCK"}`;
+  const p = await getJson(`${s.workerUrl}/presign?${q}`);
+  const r = await fetch(p.url, { headers: p.headers, signal: AbortSignal.timeout(6000) });
+  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
+  return r.json();
+}
+
 export async function fetchOhlc(symbol, resolution, from, to, kind = "stock") {
   const s = settings();
   let d;
-  if (s.workerUrl) {
+  if (s.workerUrl && store.official && store.directRest !== false) {
+    try {
+      d = await directOhlc(s, symbol, resolution, from, to, kind);
+      store.directRest = true;
+    } catch (e) {
+      store.directRest = false;
+      store.directRestError = e instanceof TypeError ? "trình duyệt chặn (CORS) hoặc mất mạng" : e.message;
+    }
+  }
+  if (d) {
+    // đã có dữ liệu từ API chính thức
+  } else if (s.workerUrl) {
     d = await getJson(`${s.workerUrl}/ohlc?symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}&kind=${kind}`);
   } else {
     d = await getJson(`${DNSE_DIRECT}/${kind}?symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}`);

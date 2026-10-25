@@ -621,6 +621,7 @@ async function loadWorkerInfo() {
   const s = settings();
   if (!s.workerUrl) return (workerInfo = {});
   try { workerInfo = await (await fetch(s.workerUrl + "/")).json(); } catch { workerInfo = {}; }
+  store.official = !!workerInfo.official;
   return workerInfo;
 }
 
@@ -730,6 +731,12 @@ $("#settingsBtn").onclick = () => {
   form.interval.value = s.interval;
   form.minAvgVol.value = compact(s.minAvgVol, 3);
   form.notify.checked = s.notify;
+  const yes = (x) => (x ? "✅" : "❌");
+  $("#srcInfo").innerHTML = !workerInfo?.official
+    ? "Nguồn giá: API biểu đồ công khai của DNSE (Worker chưa có khoá DNSE OpenAPI)."
+    : `Nguồn giá: DNSE OpenAPI (chính thức)<br>
+      ${({ live: "✅", connecting: "⏳", off: "⏸", unavailable: "❌" })[stream.state]} WebSocket realtime: ${({ live: "đang nhận", connecting: "đang kết nối", off: "chỉ mở trong giờ giao dịch", unavailable: "lỗi – " + stream.error })[stream.state]}<br>
+      ${store.directRest == null ? "⏳" : yes(store.directRest)} REST trực tiếp (biểu đồ): ${store.directRest == null ? "chưa thử – mở một biểu đồ để thử" : store.directRest ? "dùng được" : "không dùng được – " + store.directRestError + " → đang dùng nguồn dự phòng"}`;
   $("#settings").showModal();
 };
 $("#settings").addEventListener("close", async () => {

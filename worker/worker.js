@@ -18,6 +18,8 @@
 //       -> nến ngày hôm nay + giá đóng cửa hôm trước của từng mã
 //   GET /board?ex=hose|hnx|upcom
 //       -> bảng giá cả sàn trong 1 lần gọi (nguồn SSI iBoard), giá theo đồng
+//   GET /presign?symbol=FPT&resolution=1D&from=...&to=...
+//       -> yêu cầu REST OHLC đã ký sẵn để trình duyệt ở Việt Nam tự gọi API chính thức
 //   GET /ws-auth
 //       -> "vé" xác thực WebSocket realtime của DNSE (ký sẵn, hết hạn sau ít phút),
 //          để trình duyệt tự kết nối wss://ws-openapi.dnse.com.vn mà không cần biết khoá bí mật
@@ -137,6 +139,28 @@ async function handleWsAuth(env) {
   return json({ url: env.DNSE_WS_URL || OPENAPI_WS, auth: { action: "auth", api_key: env.DNSE_API_KEY, signature, timestamp, nonce } });
 }
 
+// Ký sẵn một yêu cầu REST để trình duyệt (ở Việt Nam) tự gọi openapi.dnse.com.vn.
+// Chỉ cho phép đọc nến OHLC. Trình duyệt không đặt được header "Date" nên dùng "X-Aux-Date" theo tài liệu DNSE.
+async function handlePresign(params, env) {
+  if (!official(env)) return json({ error: "Chưa cài DNSE_API_KEY / DNSE_API_SECRET" }, 404);
+  const path = "/price/ohlc";
+  const q = {};
+  for (const k of ["type", "symbol", "resolution", "from", "to"]) if (params.get(k)) q[k] = params.get(k);
+  if (!/^[A-Z0-9]{2,12}$/.test(q.symbol || "")) return json({ error: "symbol không hợp lệ" }, 400);
+  q.resolution = RES_MAP[q.resolution] || q.resolution;
+  const date = httpDate(), nonce = newNonce();
+  const sig = await signRest(env.DNSE_API_SECRET, "GET", path, date, nonce, "X-Aux-Date");
+  return json({
+    url: `${env.DNSE_API_BASE || OPENAPI}${path}?${new URLSearchParams(q)}`,
+    headers: {
+      "X-Aux-Date": date,
+      "x-api-key": env.DNSE_API_KEY,
+      version: OPENAPI_VERSION,
+      "X-Signature": `Signature keyId="${env.DNSE_API_KEY}",algorithm="hmac-sha256",headers="${sig.headers}",signature="${sig.signature}",nonce="${nonce}"`,
+    },
+  });
+}
+
 async function handleSnapshot(params) {
   const symbols = [...new Set((params.get("symbols") || "").toUpperCase().split(",").filter((s) => /^[A-Z0-9]{2,12}$/.test(s)))]
     .slice(0, MAX_SYMBOLS);
@@ -196,9 +220,9 @@ export default {
     // Trang gốc chỉ báo trạng thái (không chứa dữ liệu) nên không cần mật khẩu
     if (url.pathname === "/") {
       return json({
-        ok: true, version: 5, locked: !!env.ACCESS_KEY, official: official(env),
+        ok: true, version: 6, locked: !!env.ACCESS_KEY, official: official(env),
         restOfficial: official(env) && Date.now() > officialDownUntil, restError: officialLastError || undefined,
-        routes: ["/ohlc", "/snapshot", "/board", "/ws-auth"],
+        routes: ["/ohlc", "/snapshot", "/board", "/ws-auth", "/presign"],
       });
     }
     if (env.ACCESS_KEY && request.headers.get("X-Access-Key") !== env.ACCESS_KEY) {
@@ -206,6 +230,7 @@ export default {
     }
 
     if (url.pathname === "/ws-auth") return handleWsAuth(env); // không cache: mỗi vé chỉ dùng một lần
+    if (url.pathname === "/presign") return handlePresign(url.searchParams, env);
 
     // Cache ngắn hạn để nhiều người mở web cùng lúc không gọi DNSE quá nhiều
     const cache = caches.default;

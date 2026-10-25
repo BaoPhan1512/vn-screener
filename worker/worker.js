@@ -78,6 +78,7 @@ async function openapi(env, path, query) {
     const date = httpDate(), nonce = newNonce();
     const sig = await signRest(env.DNSE_API_SECRET, "GET", path, date, nonce, name);
     const r = await fetch(url, {
+      signal: AbortSignal.timeout(5000), // REST chính thức có thể chặn IP nước ngoài: không chờ lâu
       headers: {
         [name]: date,
         "x-api-key": env.DNSE_API_KEY,
@@ -97,9 +98,18 @@ async function openapi(env, path, query) {
 const official = (env) => !!(env.DNSE_API_KEY && env.DNSE_API_SECRET);
 const RES_MAP = { "1H": "1h" }; // API chính thức dùng "1h"
 
+// REST chính thức không truy cập được (vd chặn IP ngoài Việt Nam): tạm dùng nguồn cũ 10 phút rồi thử lại
+let officialDownUntil = 0;
+let officialLastError = "";
+
 async function dnse(kind, symbol, resolution, from, to, env) {
-  if (env && official(env)) {
-    return openapi(env, "/price/ohlc", { type: kind === "index" ? "INDEX" : "STOCK", symbol, resolution: RES_MAP[resolution] || resolution, from, to });
+  if (env && official(env) && Date.now() > officialDownUntil) {
+    try {
+      return await openapi(env, "/price/ohlc", { type: kind === "index" ? "INDEX" : "STOCK", symbol, resolution: RES_MAP[resolution] || resolution, from, to });
+    } catch (e) {
+      officialDownUntil = Date.now() + 10 * 60 * 1000;
+      officialLastError = String(e.message || e).slice(0, 200);
+    }
   }
   const url = `${DNSE}/${kind}?symbol=${encodeURIComponent(symbol)}&resolution=${encodeURIComponent(resolution)}&from=${from}&to=${to}`;
   const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
@@ -185,7 +195,11 @@ export default {
 
     // Trang gốc chỉ báo trạng thái (không chứa dữ liệu) nên không cần mật khẩu
     if (url.pathname === "/") {
-      return json({ ok: true, version: 4, locked: !!env.ACCESS_KEY, official: official(env), routes: ["/ohlc", "/snapshot", "/board", "/ws-auth"] });
+      return json({
+        ok: true, version: 5, locked: !!env.ACCESS_KEY, official: official(env),
+        restOfficial: official(env) && Date.now() > officialDownUntil, restError: officialLastError || undefined,
+        routes: ["/ohlc", "/snapshot", "/board", "/ws-auth"],
+      });
     }
     if (env.ACCESS_KEY && request.headers.get("X-Access-Key") !== env.ACCESS_KEY) {
       return json({ error: "Sai hoặc thiếu mật khẩu (X-Access-Key)" }, 401);

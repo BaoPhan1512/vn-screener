@@ -51,7 +51,7 @@ class DnseError(Exception):
 _state = {"date_header": None}
 
 
-def request(path, query=None, timeout=20):
+def request(path, query=None, timeout=8):
     """GET có ký số. Trả về JSON. Tự chọn đúng tên header ngày ở lần gọi đầu."""
     api_key, secret = credentials()
     if not (api_key and secret):

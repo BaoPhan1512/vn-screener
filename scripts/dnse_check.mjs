@@ -18,7 +18,7 @@ async function main() {
   } catch (e) {
     return bad(`Không mở được Worker ${WORKER}: ${e.message}`);
   }
-  if (!info.version || info.version < 4) return bad("Worker đang chạy code cũ: hãy dán lại code worker/worker.js mới nhất rồi Deploy");
+  if (!info.version || info.version < 5) return bad("Worker đang chạy code cũ: hãy dán lại code worker/worker.js mới nhất rồi Deploy");
   if (!info.official) return bad("Worker chưa có khoá DNSE: thêm 2 Secret DNSE_API_KEY và DNSE_API_SECRET trong Cloudflare (Settings → Variables and Secrets)");
   ok(`Worker phiên bản ${info.version}, đã có khoá DNSE${info.locked ? ", đã khoá mật khẩu" : ""}`);
 
@@ -27,7 +27,9 @@ async function main() {
   try {
     const r = await fetch(`${WORKER}/ohlc?symbol=FPT&resolution=1D&from=${now - 20 * 86400}&to=${now}`, { headers: hdr });
     const d = await r.json();
+    const after = await (await fetch(WORKER + "/")).json();
     if (r.status === 401) bad("Worker từ chối mật khẩu: secret WORKER_KEY trên GitHub phải giống ACCESS_KEY trên Cloudflare");
+    else if (r.ok && d.t && after.restOfficial === false) note("warning", `⚠️ REST chính thức không truy cập được từ Cloudflare (${after.restError || "hết thời gian chờ"}): biểu đồ và Telegram đang tự dùng nguồn cũ. FPT có ${d.t.length} nến.`);
     else if (!r.ok || !d.t) bad(`API OHLC chính thức lỗi (HTTP ${r.status}): ${JSON.stringify(d).slice(0, 300)}`);
     else ok(`API OHLC chính thức: FPT có ${d.t.length} nến ngày, giá đóng cửa gần nhất ${d.c.at(-1)}`);
   } catch (e) {

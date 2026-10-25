@@ -1,0 +1,17 @@
+{
+  "name": "vn-screener-app",
+  "private": true,
+  "description": "App Android: mở website bộ lọc cổ phiếu trong một cửa sổ app",
+  "scripts": {
+    "assets": "capacitor-assets generate --android",
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3"
+  }
+}

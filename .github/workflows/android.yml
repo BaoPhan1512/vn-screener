@@ -1,0 +1,72 @@
+# Đóng gói app Android (.apk) và đăng lên mục Releases để tải về điện thoại.
+# Chạy khi thư mục app/ thay đổi, hoặc bấm tay trong tab Actions.
+# App chỉ là "khung" mở website, nên khi website cập nhật thì app tự có bản mới, không cần cài lại.
+name: Build app Android
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Chuẩn bị dự án
+        working-directory: app
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: app/android
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          else
+            echo "::warning::Chưa có secret ANDROID_KEYSTORE_BASE64: chỉ build thử, không đăng lên Releases"
+          fi
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk ../../LocCP.apk
+
+      # Chỉ đăng khi đã có chữ ký riêng, tránh cài nhầm bản chữ ký tạm (không cập nhật đè được)
+      - name: Đăng lên Releases
+        if: ${{ env.HAS_KEYSTORE == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-v1.0.${{ github.run_number }}
+          name: App Android 1.0.${{ github.run_number }}
+          make_latest: true
+          files: LocCP.apk
+          body: |
+            Tải file **LocCP.apk** bên dưới về điện thoại Android rồi mở để cài.
+            Link tải nhanh luôn trỏ tới bản mới nhất:
+            https://github.com/BaoPhan1512/vn-screener/releases/latest/download/LocCP.apk

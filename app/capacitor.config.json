@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.baophan1512.vnscreener",
+  "appName": "Lọc CP",
+  "webDir": "www",
+  "server": {
+    "url": "https://baophan1512.github.io/vn-screener/",
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#ffffff"
+  }
+}

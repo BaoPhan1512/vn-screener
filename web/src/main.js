@@ -722,3 +722,18 @@ loadStatic().then(() => {
   compute();
   poll(true);
 });
+
+// Nút Quay lại trên app Android: đóng thứ đang mở, trả về false nếu không còn gì để đóng
+window.__vnsBack = () => {
+  if (!$("#popover").hidden) { closePopover(); return true; }
+  if (!$("#screenMenu").hidden) { $("#screenMenu").hidden = true; return true; }
+  if ($("#settings").open) { $("#settings").close(); return true; }
+  if (state.selected) { selectSymbol(null); return true; }
+  if (state.asOf != null) { setAsOf(null); return true; }
+  return false;
+};
+
+// Cho phép cài website như app (PWA)
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}

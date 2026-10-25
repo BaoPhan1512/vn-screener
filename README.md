@@ -17,9 +17,10 @@ chạy trên **GitHub Pages**, lấy dữ liệu qua **Cloudflare Workers** (gó
 ## Kiến trúc
 
 ```
-GitHub Actions (16:20 thứ 2-6) ── tải ~260 nến ngày + chỉ số cơ bản ──► data/*.json
+GitHub Actions (16:20 thứ 2-6) ── DNSE OpenAPI: danh sách mã + 330 nến ngày; VNDirect: chỉ số cơ bản ──► data/*.json
 GitHub Pages ── website tĩnh: tính chỉ báo & lọc ngay trong trình duyệt
-Cloudflare Worker ── cầu nối lấy giá trong phiên từ API biểu đồ công khai của DNSE
+Cloudflare Worker ── giữ khoá DNSE OpenAPI, ký số các yêu cầu, cấp "vé" WebSocket
+Trình duyệt ── kết nối thẳng WebSocket chính thức của DNSE để nhận giá realtime
 ```
 
 | Thư mục | Nội dung |
@@ -51,6 +52,14 @@ Kiểm tra Worker: mở `https://vn-proxy.<tên-bạn>.workers.dev/` sẽ thấy
 2. GitHub → **Settings** → **Secrets and variables** → **Actions** → secret `WORKER_KEY` = cùng mật khẩu (cho dữ liệu cuối ngày và Telegram).
 3. Trên mỗi trình duyệt/app: ⚙ **Cài đặt** → **Mật khẩu Worker** → nhập mật khẩu → **Lưu**.
 
+### 2b. Dùng nguồn dữ liệu chính thức DNSE Lightspeed OpenAPI
+1. Đăng ký Lightspeed API trên https://entradex.dnse.com.vn (Thông tin tài khoản → LightSpeed API) → nhận **API Key** và **API Secret**.
+2. Cloudflare → Worker `vn-proxy` → **Settings** → **Variables and Secrets**: thêm 2 Secret `DNSE_API_KEY`, `DNSE_API_SECRET`.
+3. GitHub → **Settings** → **Secrets and variables** → **Actions**: thêm 2 secret cùng tên (cho dữ liệu cuối ngày).
+4. Tab **Actions** → "Kiểm tra API DNSE" → **Run workflow** → xem kết quả ở mục Annotations.
+
+Điều khoản DNSE (mục 2đ): dữ liệu chỉ dùng cho mục đích giao dịch của chính chủ tài khoản, không cung cấp cho bên thứ ba.
+
 ### 3. Nhận tín hiệu qua Telegram (tuỳ chọn)
 GitHub tự lọc và gửi kết quả vào Telegram mỗi 30 phút từ 9:00 đến 15:00, bỏ giờ nghỉ trưa (thứ 2–6, ngày lễ tự bỏ qua; GitHub có thể trễ vài phút).
 1. Trong Telegram, nhắn cho **@BotFather** lệnh `/newbot`, đặt tên → nhận **token** (dạng `123456:ABC...`).
@@ -65,7 +74,7 @@ Bộ lọc được gửi nằm trong file `alerts.json`. Có thể dán link "C
 
 ## Lưu ý
 
-- Nguồn dữ liệu là API công khai (không chính thức) của DNSE và VNDirect, chỉ dùng cho mục đích cá nhân. API có thể thay đổi.
+- Giá: DNSE Lightspeed OpenAPI (chính thức, cần khoá); chưa có khoá thì dùng API biểu đồ công khai của DNSE. Chỉ số cơ bản (vốn hoá, P/E, EPS, cổ tức): VNDirect. Chỉ dùng cho mục đích cá nhân.
 - GitHub tự tắt lịch chạy nếu repo không có cập nhật nào trong 60 ngày. Khi đó vào tab **Actions** bấm **Enable workflow**.
 - Thông tin chỉ mang tính tham khảo, không phải khuyến nghị đầu tư.
 

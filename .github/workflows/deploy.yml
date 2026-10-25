@@ -43,6 +43,8 @@ jobs:
         env:
           WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
           WORKER_KEY: ${{ secrets.WORKER_KEY }}
+          DNSE_API_KEY: ${{ secrets.DNSE_API_KEY }}
+          DNSE_API_SECRET: ${{ secrets.DNSE_API_SECRET }}
         run: python scripts/build_data.py --out web/public/data --prev prev
 
       - uses: actions/setup-node@v5

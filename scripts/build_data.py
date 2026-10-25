@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 
+import dnse_api  # nguồn chính thức: DNSE Lightspeed OpenAPI
+
 VN_TZ = timezone(timedelta(hours=7))
 DNSE_CHART = "https://services.entrade.com.vn/chart-api/v2/ohlcs/stock"
 FINFO_HOSTS = ["https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"]
@@ -37,6 +39,11 @@ FINFO_HEADERS = {
 }
 BARS = 330  # ~16 tháng: đủ cho SMA200 và backtest vài tháng
 FLOORS = ["HOSE", "HNX", "UPCOM"]
+
+
+def gh(level, msg):
+    """Ghi chú hiện ở mục Annotations của lần chạy GitHub."""
+    print(f"::{level}::{str(msg).replace(chr(10), ' ')[:900]}", flush=True)
 
 
 def log(*a):
@@ -118,6 +125,17 @@ def load_prev(prev_dir, name):
 # ---------------------------------------------------------------- danh sách mã
 def fetch_symbols():
     """Trả về dict symbol -> {n: tên, e: sàn}."""
+    if dnse_api.enabled():
+        try:
+            out = dnse_api.instruments()
+            log(f"[symbols] DNSE OpenAPI: {len(out)} mã")
+            note("dnse_openapi", True)
+            if len(out) >= 500:
+                STATUS["symbolsSource"] = "DNSE OpenAPI"
+                return out
+        except Exception as e:  # noqa: BLE001
+            note("dnse_openapi", False, e)
+            gh("warning", f"DNSE OpenAPI (danh sách mã) lỗi: {e}")
     out = {}
     q = urllib.parse.quote("type:STOCK~status:LISTED")
     try:
@@ -192,13 +210,15 @@ def fetch_symbols_ssi():
 
 
 # ---------------------------------------------------------------- giá lịch sử
-HIST_STATE = {"via_worker": False}
+HIST_STATE = {"via_worker": False, "official": False}
 
 
 def fetch_history(symbol, days=520, worker=None):
     now = int(time.time())
     q = f"symbol={symbol}&resolution=1D&from={now - days * 86400}&to={now + 86400}"
-    if HIST_STATE["via_worker"] and worker:
+    if HIST_STATE["official"]:
+        d = dnse_api.ohlc(symbol, "1D", now - days * 86400, now + 86400)
+    elif HIST_STATE["via_worker"] and worker:
         d = get_json(f"{worker}/ohlc?{q}")
     else:
         d = get_json(f"{DNSE_CHART}?{q}")
@@ -384,6 +404,19 @@ def main():
 
     worker = args.worker_url.rstrip("/")
 
+    # Nguồn chính thức (có khoá API) được ưu tiên
+    if dnse_api.enabled():
+        try:
+            d = dnse_api.ohlc("FPT", "1D", _now() - 30 * 86400, _now())
+            if not d.get("t"):
+                raise dnse_api.DnseError(f"không có dữ liệu: {str(d)[:200]}")
+            HIST_STATE["official"] = True
+            STATUS["historySource"] = "DNSE OpenAPI"
+            log(f"[history] dùng DNSE OpenAPI (header ngày: {dnse_api._state['date_header']})")
+        except Exception as e:  # noqa: BLE001
+            note("dnse_openapi", False, e)
+            gh("warning", f"DNSE OpenAPI (giá lịch sử) lỗi, tạm dùng nguồn cũ: {e}")
+
     # Đo thử: gọi trực tiếp DNSE và gọi qua Worker, chọn đường nhanh + ổn định hơn
     def bench(via_worker, sample=("FPT", "VNM", "HPG", "SSI", "MWG", "ACB", "VCB", "PNJ")):
         ok, t0 = 0, time.time()
@@ -397,16 +430,18 @@ def main():
                 note("worker" if via_worker else "dnse_direct", False, e)
         return {"ok": ok, "of": len(sample), "sec": round(time.time() - t0, 1)}
 
-    direct = bench(False)
+    direct = bench(False) if not HIST_STATE["official"] else {"skipped": True}
     STATUS["benchDirect"] = direct
     log(f"[history] đo DNSE trực tiếp: {direct}")
-    if worker:
+    if worker and not HIST_STATE["official"]:
         via = bench(True)
         STATUS["benchWorker"] = via
         log(f"[history] đo qua Worker: {via}")
         if via["ok"] > direct["ok"] or (via["ok"] == direct["ok"] and via["sec"] < direct["sec"] * 0.7):
             HIST_STATE["via_worker"] = True
-    log(f"[history] dùng {'Worker' if HIST_STATE['via_worker'] else 'DNSE trực tiếp'}")
+    if not HIST_STATE["official"]:
+        STATUS["historySource"] = "chart-api (không chính thức)"
+        log(f"[history] dùng {'Worker' if HIST_STATE['via_worker'] else 'DNSE trực tiếp'}")
 
     def job(sym):
         try:
@@ -438,7 +473,11 @@ def main():
                 recent.append(0)
             recent = recent[-100:]
             # lỗi nhiều khi gọi trực tiếp -> chuyển sang Worker cho phần còn lại
-            if (not HIST_STATE["via_worker"] and worker and len(recent) >= 50
+            if (HIST_STATE["official"] and len(recent) >= 50 and sum(recent) / len(recent) < 0.7):
+                HIST_STATE["official"] = False
+                STATUS["historySource"] = "chuyển giữa chừng sang chart-api"
+                gh("warning", "DNSE OpenAPI lỗi nhiều (có thể vượt hạn mức), chuyển sang nguồn cũ cho phần còn lại")
+            if (not HIST_STATE["official"] and not HIST_STATE["via_worker"] and worker and len(recent) >= 50
                     and sum(recent) / len(recent) < 0.7):
                 HIST_STATE["via_worker"] = True
                 log("[history] lỗi nhiều, chuyển sang Worker")

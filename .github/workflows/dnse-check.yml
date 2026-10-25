@@ -1,0 +1,49 @@
+# Kiểm tra kết nối DNSE Lightspeed OpenAPI. Bấm tay: tab Actions -> "Kiểm tra API DNSE" -> Run workflow.
+# Kết quả xem ở mục Annotations của lần chạy.
+name: Kiểm tra API DNSE
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Khoá API trên GitHub (dùng cho dữ liệu cuối ngày)
+        env:
+          DNSE_API_KEY: ${{ secrets.DNSE_API_KEY }}
+          DNSE_API_SECRET: ${{ secrets.DNSE_API_SECRET }}
+        working-directory: scripts
+        run: |
+          python - <<'PY'
+          import time, dnse_api
+          def gh(level, msg): print(f"::{level}::{msg}")
+          if not dnse_api.enabled():
+              gh("error", "❌ Chưa có secret DNSE_API_KEY / DNSE_API_SECRET trên GitHub")
+          else:
+              try:
+                  d = dnse_api.request("/market/instruments", {"marketId": "STO", "securityGroupId": "ST", "limit": 5, "page": 1})
+                  gh("notice", f"✅ GitHub gọi API danh sách mã OK (HOSE có {d.get('total')} mã, header ngày: {dnse_api._state['date_header']})")
+                  o = dnse_api.ohlc("FPT", "1D", time.time() - 20 * 86400, time.time())
+                  gh("notice", f"✅ GitHub gọi API OHLC OK: FPT {len(o.get('t') or [])} nến, đóng cửa {(o.get('c') or ['?'])[-1]}")
+              except Exception as e:
+                  gh("error", f"❌ GitHub gọi API DNSE lỗi: {e}")
+          PY
+
+      - name: Worker và WebSocket (dùng cho website, app, Telegram)
+        env:
+          WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
+          WORKER_KEY: ${{ secrets.WORKER_KEY }}
+        run: node scripts/dnse_check.mjs

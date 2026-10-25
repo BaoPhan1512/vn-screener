@@ -4,6 +4,7 @@ import { passes } from "./screener.js";
 import { store, settings, saveSettings, loadStatic, refreshLive, barsFor, isMarketOpen, avgVol20, lastDate, tradingCalendar, forwardReturn, dayToStr, strToDay } from "./data.js";
 import { TEMPLATES, loadScreens, saveScreens, encodeScreen, decodeScreen, loadWatchlist, saveWatchlist } from "./screens.js";
 import { ChartPanel } from "./ui/chart.js";
+import { stream, startStream, stopStream } from "./stream.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -614,12 +615,47 @@ function universe() {
   return out;
 }
 
+// Thông tin Worker: có dùng API chính thức của DNSE không
+let workerInfo = null;
+async function loadWorkerInfo() {
+  const s = settings();
+  if (!s.workerUrl) return (workerInfo = {});
+  try { workerInfo = await (await fetch(s.workerUrl + "/")).json(); } catch { workerInfo = {}; }
+  return workerInfo;
+}
+
+// Mã ưu tiên nhận realtime: đang xem, theo dõi, rồi theo giá trị giao dịch bình quân
+function prioritized(syms) {
+  const val = (x) => avgVol20(x) * (store.history[x]?.c.at(-1) || 0);
+  const first = [state.selected, ...state.watch].filter((x) => x && syms.includes(x));
+  return [...new Set([...first, ...syms.slice().sort((a, b) => val(b) - val(a))])];
+}
+
+let renderTimer = null;
+stream.onUpdate = () => {
+  if (renderTimer) return;
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    store.lastLiveAt = stream.lastMsgAt;
+    compute(true);
+    if (state.selected) chart.quote();
+    updateStatus({ ok: 1 }, stream.conns.reduce((n, c) => n + c.symbols.length, 0));
+  }, 1000);
+};
+
 async function poll(force) {
   clearTimeout(pollTimer);
   const open = isMarketOpen();
-  if ((open || force) && !polling && !document.hidden) {
+  if (workerInfo == null) await loadWorkerInfo();
+  const useStream = open && workerInfo.official && !document.hidden;
+  if (useStream) startStream(prioritized(universe()));
+  else stopStream();
+  const streaming = useStream && stream.state !== "unavailable";
+  // Đang nhận WebSocket: không cần gọi REST (tiết kiệm hạn mức API của DNSE)
+  if ((open || force) && !polling && !document.hidden && !(streaming && !force)) {
     polling = true;
-    const syms = universe();
+    let syms = universe();
+    if (workerInfo.official) syms = prioritized(syms).slice(0, 300);
     setStatus(`Đang cập nhật ${syms.length} mã…`, "busy");
     const res = await refreshLive(syms, () => {}, state.screen.exchanges);
     polling = false;
@@ -631,7 +667,8 @@ async function poll(force) {
   } else {
     updateStatus(null, 0);
   }
-  pollTimer = setTimeout(() => poll(false), (open ? settings().interval : 60) * 1000);
+  const every = workerInfo.official ? Math.max(settings().interval, streaming ? 30 : 180) : settings().interval;
+  pollTimer = setTimeout(() => poll(false), (open ? every : 60) * 1000);
 }
 
 document.addEventListener("visibilitychange", () => { if (!document.hidden && isMarketOpen()) poll(true); });
@@ -653,7 +690,9 @@ function updateStatus(res, n) {
     return;
   }
   hideBanner();
-  if (open) setStatus(`● Realtime · ${t || "—"} · ${store.source === "SSI" ? res?.ok ?? n : n} mã · ${store.source || ""}`, "live");
+  if (open && stream.state === "live") setStatus(`● Realtime · DNSE WebSocket · ${t || "—"} · ${n} mã`, "live");
+  else if (open && stream.state === "connecting") setStatus("Đang kết nối DNSE WebSocket…", "busy");
+  else if (open) setStatus(`● Realtime · ${t || "—"} · ${store.source === "SSI" ? res?.ok ?? n : n} mã · ${workerInfo?.official ? "DNSE OpenAPI" : store.source || ""}${stream.state === "unavailable" && workerInfo?.official ? " (WebSocket lỗi: " + stream.error + ")" : ""}`, "live");
   else {
     const anySym = Object.keys(store.live)[0] || Object.keys(store.history)[0];
     const d = anySym ? lastDate(anySym) : null;
@@ -708,6 +747,8 @@ $("#settings").addEventListener("close", async () => {
   saveSettings(s);
   store.scale = null;
   store.live = {};
+  workerInfo = null;
+  stopStream();
   toast("Đã lưu cài đặt");
   poll(true);
 });

@@ -52,7 +52,7 @@ GitHub tự lọc và gửi kết quả vào Telegram lúc 9:15, 10:15, 11:15, 1
 2. Nhắn một tin bất kỳ (vd `hi`) cho bot vừa tạo.
 3. Mở `https://api.telegram.org/bot<TOKEN>/getUpdates` → tìm `"chat":{"id":123456789` → đó là **chat id**.
 4. Repo GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
-   `TELEGRAM_BOT_TOKEN` = token, `TELEGRAM_CHAT_ID` = chat id.
+   `TELEGRAM_BOT_TOKEN` = token, `TELEGRAM_CHAT_ID` = chat id (nhiều người nhận: các id cách nhau bằng dấu phẩy, hoặc dùng id của nhóm).
 5. Thử: tab **Actions** → "Tín hiệu Telegram" → **Run workflow** (tick "Gửi thử").
 
 Bộ lọc được gửi nằm trong file `alerts.json`. Có thể dán link "Chia sẻ" từ website vào, ví dụ

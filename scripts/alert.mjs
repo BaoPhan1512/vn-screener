@@ -3,6 +3,7 @@
 //
 // Biến môi trường:
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  (GitHub > Settings > Secrets)
+//   TELEGRAM_CHAT_ID có thể chứa nhiều id, cách nhau bằng dấu phẩy (vd "111,222,-100333")
 //   WORKER_URL                            (Cloudflare Worker lấy giá realtime)
 // Tuỳ chọn dòng lệnh:
 //   --dry-run   chỉ in tin nhắn ra màn hình, không gửi
@@ -25,7 +26,7 @@ const config = JSON.parse(fs.readFileSync(path.join(ROOT, "alerts.json"), "utf8"
 const SITE = config.siteUrl.replace(/\/?$/, "/");
 const WORKER = (process.env.WORKER_URL || config.workerUrl || "").replace(/\/+$/, "");
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT = process.env.TELEGRAM_CHAT_ID;
+const CHATS = (process.env.TELEGRAM_CHAT_ID || "").split(/[,\s]+/).filter(Boolean);
 const VN = 7 * 3600;
 
 const log = (...a) => console.log(...a);
@@ -110,18 +111,23 @@ function filterText(f) {
 }
 
 async function sendTelegram(text) {
-  if (DRY || !TOKEN || !CHAT) {
+  if (DRY || !TOKEN || !CHATS.length) {
     log("----- TIN NHẮN -----\n" + text.replace(/<[^>]+>/g, ""));
     if (!DRY) log("(Chưa cấu hình TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID nên chưa gửi)");
     return;
   }
-  const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: CHAT, text, parse_mode: "HTML", disable_web_page_preview: true }),
-  });
-  const d = await r.json();
-  if (!d.ok) throw new Error("Telegram: " + d.description);
+  // gửi tới từng người nhận; một người lỗi không ảnh hưởng người khác
+  const errors = [];
+  for (const chat of CHATS) {
+    const r = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    const d = await r.json();
+    if (!d.ok) errors.push(`chat ${chat}: ${d.description}`);
+  }
+  if (errors.length) throw new Error("Telegram: " + errors.join("; "));
 }
 
 async function main() {

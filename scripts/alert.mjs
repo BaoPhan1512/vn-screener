@@ -38,7 +38,10 @@ async function getJson(url, tries = 3) {
   let last;
   for (let i = 0; i < tries; i++) {
     try {
-      const r = await fetch(url, { headers: { "User-Agent": "vn-screener-alert" } });
+      const headers = { "User-Agent": "vn-screener-alert" };
+      // Worker đã khoá: gửi kèm mật khẩu (GitHub secret WORKER_KEY)
+      if (WORKER && process.env.WORKER_KEY && url.startsWith(WORKER)) headers["X-Access-Key"] = process.env.WORKER_KEY;
+      const r = await fetch(url, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return await r.json();
     } catch (e) {

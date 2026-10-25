@@ -44,7 +44,12 @@ Khoảng 5–15 phút sau, website có ở địa chỉ `https://<tên-github>.g
 5. Mở website → biểu tượng ⚙ **Cài đặt** → dán địa chỉ vào ô *Địa chỉ Cloudflare Worker* → **Lưu**.
    (Hoặc ghi vào `web/src/config.js` để áp dụng cho mọi trình duyệt.)
 
-Kiểm tra Worker: mở `https://vn-proxy.<tên-bạn>.workers.dev/snapshot?symbols=FPT,VNM` sẽ thấy dữ liệu giá.
+Kiểm tra Worker: mở `https://vn-proxy.<tên-bạn>.workers.dev/` sẽ thấy `"ok":true`.
+
+**Khoá Worker bằng mật khẩu** (chỉ bạn dùng được):
+1. Cloudflare → Worker `vn-proxy` → **Settings** → **Variables and Secrets** → **Add** → Type **Secret**, Name `ACCESS_KEY`, Value = mật khẩu → **Deploy**.
+2. GitHub → **Settings** → **Secrets and variables** → **Actions** → secret `WORKER_KEY` = cùng mật khẩu (cho dữ liệu cuối ngày và Telegram).
+3. Trên mỗi trình duyệt/app: ⚙ **Cài đặt** → **Mật khẩu Worker** → nhập mật khẩu → **Lưu**.
 
 ### 3. Nhận tín hiệu qua Telegram (tuỳ chọn)
 GitHub tự lọc và gửi kết quả vào Telegram mỗi 30 phút từ 9:00 đến 15:00, bỏ giờ nghỉ trưa (thứ 2–6, ngày lễ tự bỏ qua; GitHub có thể trễ vài phút).

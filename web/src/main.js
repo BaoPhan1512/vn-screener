@@ -640,6 +640,11 @@ function updateStatus(res, n) {
   const open = isMarketOpen();
   const t = store.lastLiveAt ? store.lastLiveAt.toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : null;
   const s = settings();
+  if (store.authError) {
+    setStatus("Worker đã khoá", "err");
+    showBanner("Worker đã được khoá bằng mật khẩu. Vào ⚙ Cài đặt → nhập \"Mật khẩu Worker\" → Lưu.");
+    return;
+  }
   if (res && res.ok === 0 && n > 0) {
     setStatus("Không lấy được giá realtime", "err");
     showBanner(s.workerUrl
@@ -682,6 +687,7 @@ $("#settingsBtn").onclick = () => {
   const s = settings();
   const form = $("#settings form");
   form.workerUrl.value = s.workerUrl;
+  form.accessKey.value = s.accessKey;
   form.interval.value = s.interval;
   form.minAvgVol.value = compact(s.minAvgVol, 3);
   form.notify.checked = s.notify;
@@ -693,6 +699,7 @@ $("#settings").addEventListener("close", async () => {
   const minAvgVol = parseNumber(form.minAvgVol.value);
   const s = {
     workerUrl: form.workerUrl.value.trim(),
+    accessKey: form.accessKey.value.trim(),
     interval: Math.max(5, parseInt(form.interval.value) || 15),
     minAvgVol: isNaN(minAvgVol) ? 10000 : minAvgVol,
     notify: form.notify.checked,

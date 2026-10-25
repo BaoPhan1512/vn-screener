@@ -4,6 +4,10 @@
 // Cách cài: Cloudflare > Workers & Pages > Create > "Hello World" > Edit code,
 // xoá hết, dán toàn bộ file này vào, bấm Deploy.
 //
+// Khoá bằng mật khẩu: Worker > Settings > Variables and Secrets > Add > Type "Secret",
+// tên ACCESS_KEY, giá trị là mật khẩu bạn chọn. Mọi yêu cầu phải gửi kèm header
+// "X-Access-Key: <mật khẩu>", nếu sai sẽ bị từ chối (401). Chưa đặt ACCESS_KEY thì Worker mở tự do.
+//
 //   GET /ohlc?symbol=FPT&resolution=5&from=...&to=...[&kind=index]
 //       -> nến (định dạng t,o,h,l,c,v của DNSE)
 //   GET /snapshot?symbols=FPT,VNM,...  (tối đa 45 mã / lần)
@@ -19,7 +23,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Headers": "X-Access-Key, Content-Type",
 };
 
 function json(body, status = 200, maxAge = 0) {
@@ -105,6 +109,10 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
 
+    if (env.ACCESS_KEY && request.headers.get("X-Access-Key") !== env.ACCESS_KEY) {
+      return json({ error: "Sai hoặc thiếu mật khẩu (X-Access-Key)" }, 401);
+    }
+
     // Cache ngắn hạn để nhiều người mở web cùng lúc không gọi DNSE quá nhiều
     const cache = caches.default;
     const cached = await cache.match(request);
@@ -115,7 +123,7 @@ export default {
       if (url.pathname === "/ohlc") res = await handleOhlc(url.searchParams);
       else if (url.pathname === "/snapshot") res = await handleSnapshot(url.searchParams);
       else if (url.pathname === "/board") res = await handleBoard(url.searchParams);
-      else return json({ ok: true, version: 2, routes: ["/ohlc", "/snapshot", "/board"] });
+      else return json({ ok: true, version: 3, locked: !!env.ACCESS_KEY, routes: ["/ohlc", "/snapshot", "/board"] });
     } catch (e) {
       return json({ error: String(e.message || e) }, 502);
     }

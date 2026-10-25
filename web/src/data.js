@@ -22,6 +22,7 @@ export function settings() {
     interval: s.interval ?? 15,
     minAvgVol: s.minAvgVol ?? 10000,
     notify: s.notify ?? false,
+    accessKey: s.accessKey ?? "",
   };
 }
 export function saveSettings(s) {
@@ -57,7 +58,11 @@ export function isMarketOpen() {
 
 // ---------------------------------------------------------------- gọi API
 async function getJson(url) {
-  const r = await fetch(url);
+  const s = settings();
+  // Gửi kèm mật khẩu khi gọi Worker đã khoá
+  const toWorker = s.workerUrl && url.startsWith(s.workerUrl);
+  const r = await fetch(url, toWorker && s.accessKey ? { headers: { "X-Access-Key": s.accessKey } } : undefined);
+  if (toWorker) store.authError = r.status === 401;
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }

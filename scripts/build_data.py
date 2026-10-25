@@ -65,6 +65,10 @@ def write_status(out):
 
 
 def get_json(url, headers=None, retries=2, timeout=12):
+    # Gọi Worker đã khoá: gửi kèm mật khẩu (GitHub secret WORKER_KEY)
+    wurl, wkey = os.environ.get("WORKER_URL", "").rstrip("/"), os.environ.get("WORKER_KEY", "")
+    if wurl and wkey and url.startswith(wurl):
+        headers = {**(headers or {"User-Agent": UA}), "X-Access-Key": wkey}
     last = None
     for i in range(retries):
         try:

@@ -4,6 +4,10 @@
   "maxRows": 30,
   "screens": [
     {
+      "name": "TRIX ASI EMA",
+      "share": "https://baophan1512.github.io/vn-screener/#s=eyJuIjoiVFJJWCBBU0kgRU1BIiwiZiI6W3sibGVmdCI6eyJmIjoibWt0Y2FwIiwicCI6W119LCJvcCI6Ij4iLCJyaWdodCI6eyJ2IjoxMDAwMDAwMDAwMDAwfX0seyJsZWZ0Ijp7ImYiOiJlbWEiLCJwIjpbMl19LCJvcCI6Ij49IiwicmlnaHQiOnsiZiI6ImVtYSIsInAiOls4XX19LHsibGVmdCI6eyJmIjoidm9sIiwicCI6W119LCJvcCI6Ij4iLCJyaWdodCI6eyJ2Ijo1MDAwMH19LHsibGVmdCI6eyJmIjoidHJpeCIsInAiOlszXX0sIm9wIjoiPiIsInJpZ2h0Ijp7ImYiOiJ0cml4U2lnIiwicCI6WzMsNl19fSx7ImxlZnQiOnsiZiI6ImFzaSIsInAiOltdfSwib3AiOiI-PSIsInJpZ2h0Ijp7InYiOjB9fV0sImUiOlsiVVBDT00iLCJIT1NFIiwiSE5YIl19"
+    },
+    {
       "name": "Vượt đỉnh 20 phiên + KL đột biến",
       "exchanges": [
         "HOSE",

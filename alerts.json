@@ -4,25 +4,48 @@
   "maxRows": 30,
   "screens": [
     {
-      "name": "Ema > MA",
-      "exchanges": ["HOSE", "HNX", "UPCOM"],
+      "name": "Vượt đỉnh 20 phiên + KL đột biến",
+      "exchanges": [
+        "HOSE",
+        "HNX",
+        "UPCOM"
+      ],
       "filters": [
-        { "left": { "f": "price", "p": [] }, "op": "crossUp", "right": { "f": "sma", "p": [20] } },
-        { "left": { "f": "chg", "p": [] }, "op": ">", "right": { "v": 0.3, "unit": "pct" } },
-        { "left": { "f": "mktcap", "p": [] }, "op": ">", "right": { "v": 1000000000000 } },
-        { "left": { "f": "ema", "p": [2] }, "op": ">", "right": { "f": "ema", "p": [5] } },
-        { "left": { "f": "price", "p": [] }, "op": ">", "right": { "v": 5000 } },
-        { "left": { "f": "vol", "p": [] }, "op": ">", "right": { "v": 50000 } },
-        { "left": { "f": "sma", "p": [2] }, "op": ">", "right": { "f": "sma", "p": [10] } }
-      ]
-    },
-    {
-      "name": "TRIX > MA(TRIX) + ASI hướng lên",
-      "exchanges": ["HOSE", "HNX", "UPCOM"],
-      "filters": [
-        { "left": { "f": "trix", "p": [3] }, "op": ">", "right": { "f": "trixSig", "p": [3, 6] } },
-        { "left": { "f": "asi", "p": [] }, "op": "rising" },
-        { "left": { "f": "avgVol", "p": [20] }, "op": ">", "right": { "v": 100000 } }
+        {
+          "left": {
+            "f": "price",
+            "p": []
+          },
+          "op": ">",
+          "right": {
+            "f": "hiN",
+            "p": [
+              20
+            ]
+          }
+        },
+        {
+          "left": {
+            "f": "relVol",
+            "p": [
+              20
+            ]
+          },
+          "op": ">",
+          "right": {
+            "v": 1.5
+          }
+        },
+        {
+          "left": {
+            "f": "value",
+            "p": []
+          },
+          "op": ">",
+          "right": {
+            "v": 5000000000
+          }
+        }
       ]
     }
   ]

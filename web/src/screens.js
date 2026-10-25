@@ -17,6 +17,14 @@ export const TEMPLATES = [
     ],
   },
   {
+    name: "TRIX > MA(TRIX) + ASI hướng lên",
+    filters: [
+      { left: F("trix", 3), op: ">", right: F("trixSig", 3, 6) },
+      { left: F("asi"), op: "rising" },
+      { left: F("avgVol", 20), op: ">", right: V(100000) },
+    ],
+  },
+  {
     name: "Vượt đỉnh 20 phiên + KL đột biến",
     filters: [
       { left: F("price"), op: ">", right: F("hiN", 20) },

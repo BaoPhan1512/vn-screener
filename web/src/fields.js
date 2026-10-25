@@ -6,6 +6,8 @@ import * as ind from "./indicators.js";
 const shift = (arr, k = 1) => arr.map((_, i) => (i - k >= 0 ? arr[i - k] : null));
 const pctChange = (c, n) => c.map((x, i) => (i - n >= 0 && c[i - n] ? (x / c[i - n] - 1) * 100 : null));
 
+const LIMIT_PCT = { HOSE: 0.07, HNX: 0.1, UPCOM: 0.15 };
+
 // fmt: price | pct | num | vol | money | ratio
 export const FIELDS = {
   price:   { label: "Giá", group: "Giá", fmt: "price", series: (x) => x.c },
@@ -37,6 +39,11 @@ export const FIELDS = {
   macdHist:{ label: "MACD Histogram", short: "MACD Hist", group: "Chỉ báo", fmt: "num", params: [{ name: "Nhanh", def: 12 }, { name: "Chậm", def: 26 }, { name: "Tín hiệu", def: 9 }], series: (x, p) => ind.macd(x.c, ...p).hist },
   bbUpper: { label: "Bollinger trên", short: "BB trên", group: "Chỉ báo", fmt: "price", params: [{ name: "Chu kỳ", def: 20 }, { name: "Độ lệch", def: 2 }], series: (x, [n, k]) => ind.bollinger(x.c, n, k).upper },
   bbLower: { label: "Bollinger dưới", short: "BB dưới", group: "Chỉ báo", fmt: "price", params: [{ name: "Chu kỳ", def: 20 }, { name: "Độ lệch", def: 2 }], series: (x, [n, k]) => ind.bollinger(x.c, n, k).lower },
+  trix:    { label: "TRIX", group: "Chỉ báo", fmt: "num", params: [{ name: "Chu kỳ", def: 3 }], series: (x, [n]) => ind.trix(x.c, n) },
+  trixSig: { label: "MA của TRIX (đường tín hiệu)", short: "MA TRIX", group: "Chỉ báo", fmt: "num", params: [{ name: "Chu kỳ TRIX", def: 3 }, { name: "Chu kỳ MA", def: 6 }],
+    series: (x, [n, m], get) => ind.smaSeries(get("trix", [n]), m) },
+  asi:     { label: "ASI (Accumulative Swing Index)", short: "ASI", group: "Chỉ báo", fmt: "num",
+    series: (x) => ind.asi(x.o, x.h, x.l, x.c, LIMIT_PCT[x.meta.e] || 0.07) },
   atrPct:  { label: "ATR (% giá)", short: "ATR%", group: "Chỉ báo", fmt: "pct", params: [{ name: "Chu kỳ", def: 14 }],
     series: (x, [n]) => ind.atr(x.h, x.l, x.c, n).map((a, i) => (a == null ? null : (a / x.c[i]) * 100)) },
 
@@ -55,6 +62,8 @@ export const OPERATORS = {
   crossUp: { label: "cắt lên ↗" },
   crossDown: { label: "cắt xuống ↘" },
   between: { label: "trong khoảng" },
+  rising: { label: "hướng lên ↑", unary: true },
+  falling: { label: "hướng xuống ↓", unary: true },
 };
 
 export function defaultParams(key) {

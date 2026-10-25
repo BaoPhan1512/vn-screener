@@ -103,3 +103,51 @@ export function highest(src, n) {
 export function lowest(src, n) {
   return src.map((_, i) => (i < n - 1 ? null : Math.min(...src.slice(i - n + 1, i + 1))));
 }
+
+// EMA cho chuỗi có thể bắt đầu bằng null (dùng khi lồng nhiều lớp EMA)
+export function emaSeries(src, n) {
+  const start = src.findIndex((x) => x != null);
+  const out = new Array(src.length).fill(null);
+  if (start < 0) return out;
+  const e = ema(src.slice(start), n);
+  for (let i = 0; i < e.length; i++) out[start + i] = e[i];
+  return out;
+}
+
+export function smaSeries(src, n) {
+  const start = src.findIndex((x) => x != null);
+  const out = new Array(src.length).fill(null);
+  if (start < 0) return out;
+  const s = sma(src.slice(start), n);
+  for (let i = 0; i < s.length; i++) out[start + i] = s[i];
+  return out;
+}
+
+// TRIX: % thay đổi 1 phiên của EMA ba lớp (giống AmiBroker / TradingView)
+export function trix(src, n) {
+  const e3 = emaSeries(emaSeries(emaSeries(src, n), n), n);
+  return e3.map((x, i) => (i > 0 && x != null && e3[i - 1] ? ((x - e3[i - 1]) / e3[i - 1]) * 100 : null));
+}
+
+// ASI - Accumulative Swing Index (Wilder). limitPct: biên độ giá của sàn (HOSE 7%...)
+export function asi(open, high, low, close, limitPct = 0.07) {
+  const out = new Array(close.length).fill(null);
+  if (!close.length) return out;
+  let acc = 0;
+  out[0] = 0;
+  for (let i = 1; i < close.length; i++) {
+    const C = close[i], H = high[i], L = low[i], Cy = close[i - 1];
+    const O = open[i] ?? Cy, Oy = open[i - 1] ?? close[i - 2] ?? Cy;
+    const a = Math.abs(H - Cy), b = Math.abs(L - Cy), c = Math.abs(H - L), d = Math.abs(Cy - Oy);
+    let R;
+    if (a >= b && a >= c) R = a - 0.5 * b + 0.25 * d;
+    else if (b >= a && b >= c) R = b - 0.5 * a + 0.25 * d;
+    else R = c + 0.25 * d;
+    const K = Math.max(a, b);
+    const T = Cy * limitPct;
+    const si = R && T ? (50 * (C - Cy + 0.5 * (C - O) + 0.25 * (Cy - Oy)) / R) * (K / T) : 0;
+    acc += si;
+    out[i] = acc;
+  }
+  return out;
+}

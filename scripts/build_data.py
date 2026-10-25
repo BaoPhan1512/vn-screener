@@ -35,7 +35,7 @@ FINFO_HEADERS = {
     "Origin": "https://dstock.vndirect.com.vn",
     "Referer": "https://dstock.vndirect.com.vn/",
 }
-BARS = 260
+BARS = 330  # ~16 tháng: đủ cho SMA200 và backtest vài tháng
 FLOORS = ["HOSE", "HNX", "UPCOM"]
 
 
@@ -191,7 +191,7 @@ def fetch_symbols_ssi():
 HIST_STATE = {"via_worker": False}
 
 
-def fetch_history(symbol, days=420, worker=None):
+def fetch_history(symbol, days=520, worker=None):
     now = int(time.time())
     q = f"symbol={symbol}&resolution=1D&from={now - days * 86400}&to={now + 86400}"
     if HIST_STATE["via_worker"] and worker:
@@ -199,7 +199,8 @@ def fetch_history(symbol, days=420, worker=None):
     else:
         d = get_json(f"{DNSE_CHART}?{q}")
     t, c, h, l, v = d.get("t") or [], d.get("c") or [], d.get("h") or [], d.get("l") or [], d.get("v") or []
-    rows = [(t[i], c[i], h[i], l[i], v[i]) for i in range(len(t)) if c[i] is not None]
+    o = d.get("o") or [None] * len(t)
+    rows = [(t[i], c[i], h[i], l[i], v[i], o[i]) for i in range(len(t)) if c[i] is not None]
     rows = rows[-BARS:]
     if not rows:
         return None
@@ -207,8 +208,13 @@ def fetch_history(symbol, days=420, worker=None):
     closes = sorted(r[1] for r in rows)
     mult = 1000 if closes[len(closes) // 2] < 1000 else 1
     last_date = datetime.fromtimestamp(rows[-1][0], VN_TZ).strftime("%Y-%m-%d")
+    # ngày giao dịch: số ngày kể từ 1/1/1970 (giờ VN), lưu dạng ngày đầu + khoảng cách
+    days_vn = [int((r[0] + 7 * 3600) // 86400) for r in rows]
     return {
         "d": last_date,
+        "t0": days_vn[0],
+        "dt": [days_vn[i] - days_vn[i - 1] for i in range(1, len(days_vn))],
+        "o": [round(r[5] * mult) if r[5] is not None else round(r[1] * mult) for r in rows],
         "c": [round(r[1] * mult) for r in rows],
         "h": [round(r[2] * mult) for r in rows],
         "l": [round(r[3] * mult) for r in rows],

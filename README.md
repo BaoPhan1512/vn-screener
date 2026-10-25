@@ -6,11 +6,12 @@ chạy trên **GitHub Pages**, lấy dữ liệu qua **Cloudflare Workers** (gó
 ## Tính năng
 
 - Điều kiện lọc dạng "chip" như TradingView: `Giá cắt lên ↗ SMA 20`, `EMA 2 > EMA 5`, `KL > 50K`, `Vốn hoá > 1T`…
-- So sánh chỉ báo với chỉ báo hoặc với một con số; toán tử `> ≥ < ≤`, **cắt lên**, **cắt xuống**, **trong khoảng**
-- Chỉ báo: SMA, EMA, RSI, MACD, Bollinger, ATR, đỉnh/đáy N phiên, đỉnh/đáy 52 tuần, KL trung bình, KL tương đối, hiệu suất…
+- So sánh chỉ báo với chỉ báo hoặc với một con số; toán tử `> ≥ < ≤`, **cắt lên**, **cắt xuống**, **trong khoảng**, **hướng lên**, **hướng xuống**
+- Chỉ báo: SMA, EMA, RSI, MACD, TRIX + MA(TRIX), ASI, Bollinger, ATR, đỉnh/đáy N phiên, đỉnh/đáy 52 tuần, KL trung bình, KL tương đối, hiệu suất…
 - Cơ bản: vốn hoá, P/E, EPS, tỷ suất cổ tức
 - Cập nhật realtime trong giờ giao dịch (mặc định 15 giây/lần), nhấp nháy khi giá đổi, gắn nhãn **MỚI** cho mã vừa lọt vào bộ lọc, có thể bật thông báo
 - Bấm vào mã để mở biểu đồ nến (1m, 5m, 15m, 1H, 1D, 1W) với MA, EMA, Bollinger, RSI, MACD, khối lượng; dùng phím ↑/↓ để chuyển mã
+- **Backtest**: nút 📅 chọn một ngày trong quá khứ (dữ liệu ~16 tháng), lọc như tại ngày đó và xem lợi nhuận sau 1, 3, 5, 10, 20 phiên, tỷ lệ mã tăng
 - Lưu nhiều bộ lọc, có sẵn các mẫu, chia sẻ bộ lọc bằng link, danh sách theo dõi ★, giao diện sáng/tối, dùng được trên điện thoại
 
 ## Kiến trúc

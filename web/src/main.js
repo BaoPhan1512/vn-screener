@@ -1,7 +1,7 @@
 import "./style.css";
 import { FIELDS, OPERATORS, defaultParams, operandLabel, operandKey, makeContext, formatValue, parseNumber, compact } from "./fields.js";
 import { passes } from "./screener.js";
-import { store, settings, saveSettings, loadStatic, refreshLive, barsFor, isMarketOpen, avgVol20, lastDate } from "./data.js";
+import { store, settings, saveSettings, loadStatic, refreshLive, barsFor, isMarketOpen, avgVol20, lastDate, tradingCalendar, forwardReturn, dayToStr, strToDay } from "./data.js";
 import { TEMPLATES, loadScreens, saveScreens, encodeScreen, decodeScreen, loadWatchlist, saveWatchlist } from "./screens.js";
 import { ChartPanel } from "./ui/chart.js";
 
@@ -10,11 +10,13 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const F = (f, ...p) => ({ f, p: p.length ? p : defaultParams(f) });
 
 // ---------------------------------------------------------------- cột theo tab
+const BT_HORIZONS = [1, 3, 5, 10, 20, "now"];
 const TABS = {
   overview: { label: "Tổng quan", cols: [F("price"), F("chg"), F("vol"), F("relVol", 20), F("value"), F("mktcap"), F("pe"), F("eps"), F("divYield")] },
   performance: { label: "Hiệu suất", cols: [F("price"), F("chg"), { f: "perf", p: [5], label: "1 Tuần" }, { f: "perf", p: [21], label: "1 Tháng" }, { f: "perf", p: [63], label: "3 Tháng" }, { f: "perf", p: [126], label: "6 Tháng" }, { f: "perf", p: [250], label: "1 Năm" }, F("fromHigh52")] },
   technical: { label: "Kỹ thuật", cols: [F("price"), F("chg"), F("rsi", 14), F("macdHist"), F("sma", 20), F("sma", 50), F("sma", 200), F("atrPct", 14), F("relVol", 20)] },
   valuation: { label: "Định giá", cols: [F("price"), F("chg"), F("mktcap"), F("pe"), F("eps"), F("divYield"), F("value")] },
+  backtest: { label: "Backtest", onlyBacktest: true, cols: [F("price"), F("chg"), F("vol"), ...BT_HORIZONS.map((k) => ({ f: "bt", p: [k], label: k === "now" ? "Đến nay" : `Sau ${k} phiên` }))] },
 };
 
 // ---------------------------------------------------------------- trạng thái
@@ -33,6 +35,8 @@ const state = {
   newSince: new Map(),
   prevValues: new Map(),
   loading: true,
+  asOf: null, // ngày backtest (số ngày kể từ 1970), null = hôm nay
+  tabBeforeBacktest: null,
 };
 
 const shared = location.hash.startsWith("#s=") ? decodeScreen(location.hash.slice(3)) : null;
@@ -43,7 +47,7 @@ if (shared) {
 } else {
   state.screen = structuredClone(state.screens.list[state.screens.current] || state.screens.list[0]);
 }
-if (!TABS[state.tab]) state.tab = "overview";
+if (!TABS[state.tab] || TABS[state.tab].onlyBacktest) state.tab = "overview";
 
 const chart = new ChartPanel($("#chartPanel"));
 chart.onClose = () => selectSymbol(null);
@@ -51,6 +55,7 @@ chart.onClose = () => selectSymbol(null);
 // ---------------------------------------------------------------- bộ lọc (chip)
 function filterText(f) {
   const op = OPERATORS[f.op]?.label || f.op;
+  if (OPERATORS[f.op]?.unary) return `${operandLabel(f.left)} ${op}`;
   if (f.op === "between") return `${operandLabel(f.left)} ${op} ${operandLabel(f.right)} – ${operandLabel(f.right2 || { v: 0 })}`;
   return `${operandLabel(f.left)} ${op} ${operandLabel(f.right)}`;
 }
@@ -59,7 +64,7 @@ function renderChips() {
   const el = $("#chips");
   el.innerHTML = state.screen.filters
     .map((f, i) => {
-      const [l, ...rest] = filterText(f).split(/ (?=[><≥≤]|cắt|trong)/);
+      const [l, ...rest] = filterText(f).split(/ (?=[><≥≤]|cắt|trong|hướng)/);
       return `<span class="chip ${f.off ? "off" : ""}" data-i="${i}"><span class="chip-l">${esc(l)}</span><b>${esc(rest.join(" "))}</b><button class="chip-x" data-x="${i}" title="Xoá">✕</button></span>`;
     })
     .join("");
@@ -118,16 +123,18 @@ function openEditor(index, anchor) {
   const f = isNew
     ? { left: F("price"), op: ">", right: F("sma", 20) }
     : structuredClone(state.screen.filters[index]);
+  f.right ||= F("sma", 20); // điều kiện một vế (hướng lên/xuống) không có vế phải
   const pop = $("#popover");
 
   function draw() {
     const rightIsValue = f.right.v !== undefined;
+    const unary = !!OPERATORS[f.op]?.unary;
     pop.innerHTML = `
       <div class="ed-row"><select id="edLeft" class="field-sel">${fieldOptions(f.left.f)}</select><span id="edLeftP">${paramInputs(f.left.f, f.left.p, "l")}</span></div>
       <div class="ed-row"><select id="edOp">${Object.entries(OPERATORS).map(([k, o]) => `<option value="${k}" ${k === f.op ? "selected" : ""}>${o.label}</option>`).join("")}</select>
-        ${f.op === "between" ? "" : `<div class="seg small" id="edKind"><button data-k="v" class="${rightIsValue ? "on" : ""}">Giá trị</button><button data-k="f" class="${rightIsValue ? "" : "on"}">Chỉ báo</button></div>`}
+        ${f.op === "between" || unary ? "" : `<div class="seg small" id="edKind"><button data-k="v" class="${rightIsValue ? "on" : ""}">Giá trị</button><button data-k="f" class="${rightIsValue ? "" : "on"}">Chỉ báo</button></div>`}
       </div>
-      <div class="ed-row">${
+      <div class="ed-row" ${unary ? "hidden" : ""}>${
         f.op === "between"
           ? `<input id="edV" class="num" placeholder="từ" value="${rightIsValue ? esc(fmtIn(f.right)) : ""}"> – <input id="edV2" class="num" placeholder="đến" value="${f.right2 ? esc(fmtIn(f.right2)) : ""}">`
           : rightIsValue
@@ -180,6 +187,7 @@ function openEditor(index, anchor) {
 
   function hint(f) {
     const fmt = FIELDS[f.left.f]?.fmt;
+    if (OPERATORS[f.op]?.unary) return f.op === "rising" ? "Hướng lên: giá trị phiên hiện tại lớn hơn phiên trước." : "Hướng xuống: giá trị phiên hiện tại nhỏ hơn phiên trước.";
     if (f.op.startsWith("cross")) return "Cắt lên: hôm qua còn ≤, hôm nay đã > (tính trên nến ngày, cập nhật theo giá realtime).";
     if (fmt === "pct") return "Nhập số phần trăm, ví dụ 0.3 nghĩa là 0,3%.";
     if (fmt === "money") return "Đơn vị đồng. Viết tắt: K = nghìn, M = triệu, B = tỷ, T = nghìn tỷ. Ví dụ 1T = 1.000 tỷ.";
@@ -191,6 +199,7 @@ function openEditor(index, anchor) {
   function readInputs(validate) {
     const lp = [...pop.querySelectorAll('[data-param="l"]')].map((i) => Math.max(1, parseInt(i.value) || 1));
     if (lp.length) f.left.p = lp;
+    if (OPERATORS[f.op]?.unary) return true;
     if (f.right.v !== undefined || f.op === "between") {
       const raw = pop.querySelector("#edV")?.value;
       const v = parseNumber(raw);
@@ -223,7 +232,7 @@ function closePopover() {
   $("#popover").hidden = true;
 }
 document.addEventListener("mousedown", (e) => {
-  if (!$("#popover").hidden && !e.target.closest("#popover") && !e.target.closest(".chip") && !e.target.closest("#addFilter")) closePopover();
+  if (!$("#popover").hidden && !e.target.closest("#popover") && !e.target.closest(".chip") && !e.target.closest("#addFilter") && !e.target.closest("#asOfBtn")) closePopover();
   if (!$("#screenMenu").hidden && !e.target.closest(".screen-menu")) $("#screenMenu").hidden = true;
 });
 
@@ -314,7 +323,7 @@ function columns() {
   const keys = new Set(base.map(operandKey));
   const extra = [];
   for (const f of state.screen.filters) {
-    for (const o of [f.left, f.right]) {
+    for (const o of OPERATORS[f.op]?.unary ? [f.left] : [f.left, f.right]) {
       if (o.f && !keys.has(operandKey(o))) {
         keys.add(operandKey(o));
         extra.push({ ...o, extra: true });
@@ -334,13 +343,13 @@ function compute(fromPoll = false) {
     const meta = store.meta[sym] || {};
     if (meta.e && !exs.has(meta.e)) continue;
     if (state.watchOnly && !state.watch.has(sym)) continue;
-    const bars = barsFor(sym);
+    const bars = barsFor(sym, state.asOf);
     if (!bars || bars.c.length < 2) continue;
     const ctx = makeContext(sym, bars, meta);
     if (!passes(ctx, state.screen.filters)) continue;
     if (q && !sym.startsWith(q) && !(meta.n || "").toUpperCase().includes(q)) continue;
     const vals = {};
-    for (const c of cols) vals[operandKey(c)] = ctx.value(c);
+    for (const c of cols) vals[operandKey(c)] = c.f === "bt" ? (bars.idx != null ? forwardReturn(sym, bars.idx, c.p[0]) : null) : ctx.value(c);
     rows.push({ sym, meta, vals });
   }
   const k = state.sort.key, d = state.sort.dir;
@@ -355,7 +364,7 @@ function compute(fromPoll = false) {
   // đánh dấu mã mới lọt vào bộ lọc
   const set = new Set(rows.map((r) => r.sym));
   const now = Date.now();
-  if (fromPoll && state.prevSet && state.screen.filters.length) {
+  if (fromPoll && state.asOf == null && state.prevSet && state.screen.filters.length) {
     const fresh = [...set].filter((s) => !state.prevSet.has(s));
     for (const s of fresh) state.newSince.set(s, now);
     if (fresh.length) notifyNew(fresh);
@@ -365,7 +374,99 @@ function compute(fromPoll = false) {
 
   state.rows = rows;
   renderTable(cols);
+  renderBacktestSummary(rows);
 }
+
+// ---------------------------------------------------------------- backtest
+function renderBacktestSummary(rows) {
+  const el = $("#btSummary");
+  if (state.asOf == null) { el.hidden = true; return; }
+  const cells = BT_HORIZONS.map((k) => {
+    const vals = rows.map((r) => forwardReturnFor(r, k)).filter((x) => x != null);
+    if (!vals.length) return `<div class="bt-cell"><span>${k === "now" ? "Đến nay" : `Sau ${k} phiên`}</span><b>—</b><small>chưa đủ dữ liệu</small></div>`;
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const win = (vals.filter((x) => x > 0).length / vals.length) * 100;
+    const sorted = [...vals].sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    return `<div class="bt-cell"><span>${k === "now" ? "Đến nay" : `Sau ${k} phiên`}</span>
+      <b class="${avg > 0 ? "up" : avg < 0 ? "down" : ""}">${avg > 0 ? "+" : ""}${avg.toFixed(2)}%</b>
+      <small>Tỷ lệ tăng ${win.toFixed(0)}% · trung vị ${med > 0 ? "+" : ""}${med.toFixed(2)}% · ${vals.length} mã</small></div>`;
+  });
+  el.innerHTML = `<div class="bt-head">Backtest: lọc tại phiên <b>${fmtDay(state.asOf)}</b> · ${rows.length} mã thoả điều kiện · lợi nhuận trung bình nếu mua theo giá đóng cửa ngày lọc
+    <button class="btn small" id="btExit">Về hôm nay</button></div><div class="bt-grid">${cells.join("")}</div>`;
+  el.hidden = false;
+  $("#btExit").onclick = () => setAsOf(null);
+}
+
+function forwardReturnFor(row, k) {
+  const v = row.vals[`bt(${k})`];
+  if (v !== undefined) return v;
+  const bars = barsFor(row.sym, state.asOf);
+  return bars ? forwardReturn(row.sym, bars.idx, k) : null;
+}
+
+const fmtDay = (n) => dayToStr(n).split("-").reverse().join("/");
+
+function setAsOf(day) {
+  const cal = tradingCalendar();
+  if (day != null) {
+    // chọn đúng phiên giao dịch gần nhất trước hoặc bằng ngày đã chọn
+    const valid = cal.filter((d) => d <= day);
+    day = valid.length ? valid[valid.length - 1] : null;
+    if (day != null && day >= cal[cal.length - 1]) day = null; // ngày gần nhất = hôm nay
+  }
+  const was = state.asOf;
+  state.asOf = day;
+  if (day != null && was == null) {
+    state.tabBeforeBacktest = state.tab;
+    state.tab = "backtest";
+  } else if (day == null && state.tab === "backtest") {
+    state.tab = state.tabBeforeBacktest && !TABS[state.tabBeforeBacktest].onlyBacktest ? state.tabBeforeBacktest : "overview";
+  }
+  state.prevSet = null;
+  $("#asOfBtn").textContent = day == null ? "📅 Hôm nay" : "📅 " + fmtDay(day);
+  $("#asOfBtn").classList.toggle("on", day != null);
+  chart.setAsOf(day == null ? null : dayToStr(day));
+  renderTabs();
+  compute();
+}
+
+$("#asOfBtn").onclick = (e) => {
+  const cal = tradingCalendar();
+  const pop = $("#popover");
+  if (cal.length < 30) {
+    toast("Dữ liệu hiện tại chưa có ngày giao dịch. Chờ lần cập nhật dữ liệu tiếp theo.");
+    return;
+  }
+  const last = cal[cal.length - 1];
+  const pick = (n) => cal[Math.max(0, cal.length - 1 - n)];
+  const quick = [["1 tuần", 5], ["2 tuần", 10], ["1 tháng", 21], ["3 tháng", 63], ["6 tháng", 126]];
+  pop.innerHTML = `
+    <div class="ed-row"><b>Lọc tại ngày trong quá khứ (backtest)</b></div>
+    <div class="ed-row"><input type="date" id="asOfInput" min="${dayToStr(cal[0])}" max="${dayToStr(last)}" value="${dayToStr(state.asOf ?? pick(5))}"></div>
+    <div class="ed-row">${quick.map(([l, n]) => `<button class="btn small" data-back="${n}">${l} trước</button>`).join("")}</div>
+    <div class="ed-hint">Chỉ báo được tính đúng như tại ngày đó (không dùng dữ liệu tương lai). Bảng sẽ cho biết các mã lọt lọc đã tăng/giảm bao nhiêu sau 1, 3, 5, 10, 20 phiên. Dữ liệu có từ ${fmtDay(cal[0])}; các chỉ báo chu kỳ dài (vd SMA200) cần đủ số phiên trước ngày lọc.</div>
+    <div class="ed-actions">
+      ${state.asOf != null ? '<button class="btn" id="asOfReset">Về hôm nay</button>' : ""}
+      <span class="sp"></span>
+      <button class="btn" id="asOfCancel">Huỷ</button>
+      <button class="btn primary" id="asOfOk">Lọc</button>
+    </div>`;
+  pop.querySelectorAll("[data-back]").forEach((b) => (b.onclick = () => { pop.querySelector("#asOfInput").value = dayToStr(pick(+b.dataset.back)); }));
+  pop.querySelector("#asOfCancel").onclick = closePopover;
+  pop.querySelector("#asOfReset")?.addEventListener("click", () => { closePopover(); setAsOf(null); });
+  pop.querySelector("#asOfOk").onclick = () => {
+    const v = pop.querySelector("#asOfInput").value;
+    closePopover();
+    if (v) setAsOf(strToDay(v));
+  };
+  pop.hidden = false;
+  const r = e.currentTarget.getBoundingClientRect();
+  const w = Math.min(420, window.innerWidth - 24);
+  pop.style.width = w + "px";
+  pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + "px";
+  pop.style.top = r.bottom + window.scrollY + 6 + "px";
+};
 
 const LIMITS = { HOSE: 7, HNX: 10, UPCOM: 15 };
 function priceClass(chg, ex) {
@@ -379,7 +480,7 @@ function priceClass(chg, ex) {
 
 function renderTabs() {
   $("#tabs").innerHTML =
-    Object.entries(TABS).map(([k, t]) => `<button data-tab="${k}" class="${k === state.tab ? "on" : ""}">${t.label}</button>`).join("") +
+    Object.entries(TABS).filter(([, t]) => !t.onlyBacktest || state.asOf != null).map(([k, t]) => `<button data-tab="${k}" class="${k === state.tab ? "on" : ""}">${t.label}</button>`).join("") +
     `<span class="sp"></span><input id="search" class="search" placeholder="Tìm mã…" value="${esc(state.search)}">`;
   $("#search").oninput = (e) => { state.search = e.target.value; compute(); };
 }
@@ -412,15 +513,16 @@ function renderTable(cols) {
   const maxRows = 500;
   for (const r of state.rows.slice(0, maxRows)) {
     const chg = r.vals.chg ?? r.vals[operandKey(F("chg"))];
-    const lv = store.live[r.sym];
+    const lv = state.asOf == null ? store.live[r.sym] : null;
     const pc = lv?.ce && lv.c >= lv.ce ? "ceil" : lv?.fl && lv.c <= lv.fl ? "floor" : priceClass(chg, r.meta.e);
     const isNew = state.newSince.has(r.sym);
     const cells = cols.map((c) => {
       const k = operandKey(c);
       const v = r.vals[k];
-      const f = FIELDS[c.f];
+      const f = FIELDS[c.f] || (c.f === "bt" ? { fmt: "pct" } : undefined);
       let cls = "num";
       if (c.f === "price" || c.f === "chg" || c.f === "chgAbs") cls += " " + pc;
+      else if (c.f === "bt") cls += " bt" + (v > 0 ? " up" : v < 0 ? " down" : "");
       else if (f?.fmt === "pct" && v != null && !f.unsigned) cls += v > 0 ? " up" : v < 0 ? " down" : "";
       const id = r.sym + "|" + k;
       const old = prev.get(id);

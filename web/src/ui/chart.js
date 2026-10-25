@@ -1,5 +1,5 @@
 // Biểu đồ giá kiểu TradingView, dùng thư viện Lightweight Charts (miễn phí, của TradingView).
-import { createChart, CandlestickSeries, HistogramSeries, LineSeries, CrosshairMode } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries, CrosshairMode, createSeriesMarkers } from "lightweight-charts";
 import { fetchOhlc, store, isMarketOpen, vnDate } from "../data.js";
 import * as ind from "../indicators.js";
 
@@ -22,7 +22,10 @@ const OVERLAYS = [
 const PANES = [
   { key: "rsi", label: "RSI" },
   { key: "macd", label: "MACD" },
+  { key: "trix", label: "TRIX" },
+  { key: "asi", label: "ASI" },
 ];
+const LIMIT_PCT = { HOSE: 0.07, HNX: 0.1, UPCOM: 0.15 };
 
 function prefs() {
   try {
@@ -129,6 +132,16 @@ export class ChartPanel {
       this.paneSeries.macdSig = this.chart.addSeries(LineSeries, { ...lineOpt, color: "#ff6d00" }, pane);
       pane++;
     }
+    if (this.p.panes.trix) {
+      this.paneSeries.trix = this.chart.addSeries(LineSeries, { ...lineOpt, color: "#2962ff", title: "TRIX 3" }, pane);
+      this.paneSeries.trixSig = this.chart.addSeries(LineSeries, { ...lineOpt, color: "#ff6d00", title: "MA 6" }, pane);
+      pane++;
+    }
+    if (this.p.panes.asi) {
+      this.paneSeries.asi = this.chart.addSeries(LineSeries, { ...lineOpt, color: "#0891b2", title: "ASI" }, pane);
+      pane++;
+    }
+    this.markers = createSeriesMarkers(this.candle, []);
     const panes = this.chart.panes();
     for (let i = 1; i < panes.length; i++) panes[i].setStretchFactor(0.35);
     this.chart.subscribeCrosshairMove((param) => this.legend(param));
@@ -221,7 +234,22 @@ export class ChartPanel {
       this.paneSeries.macdSig.setData(toLine(m.signal));
       this.paneSeries.macdHist.setData(m.hist.map((v, i) => (v == null ? { time: times[i] } : { time: times[i], value: v, color: v >= 0 ? c.up + "99" : c.down + "99" })));
     }
-    if (fit && bars.length) {
+    if (this.paneSeries.trix) {
+      const t = ind.trix(closes, 3);
+      this.paneSeries.trix.setData(toLine(t));
+      this.paneSeries.trixSig.setData(toLine(ind.smaSeries(t, 6)));
+    }
+    if (this.paneSeries.asi) {
+      const lim = LIMIT_PCT[store.meta[this.symbol]?.e] || 0.07;
+      this.paneSeries.asi.setData(toLine(ind.asi(bars.map((b) => b.open), bars.map((b) => b.high), bars.map((b) => b.low), closes, lim)));
+    }
+    this.drawMarker(times);
+    if (fit && bars.length && this.asOf && (this.p.tf === "1D" || this.p.tf === "1W")) {
+      // backtest: hiển thị quanh ngày lọc
+      const i = times.findIndex((t) => t >= this.asOf);
+      if (i >= 0) this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, i - 90), to: Math.min(bars.length + 4, i + 40) });
+      else this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - 120), to: bars.length + 4 });
+    } else if (fit && bars.length) {
       const n = bars.length;
       this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 120), to: n + 4 });
     }
@@ -277,6 +305,22 @@ export class ChartPanel {
         this.render(false);
       } catch {}
     }, 10000);
+  }
+
+  // Ngày backtest ("YYYY-MM-DD") hoặc null
+  setAsOf(day) {
+    this.asOf = day;
+    if (this.symbol) this.render(true);
+  }
+
+  drawMarker(times) {
+    if (!this.markers) return;
+    const daily = this.p.tf === "1D" || this.p.tf === "1W";
+    if (!this.asOf || !daily) { this.markers.setMarkers([]); return; }
+    // tuần: đánh dấu nến tuần chứa ngày lọc
+    let t = times.filter((x) => x <= this.asOf).pop();
+    if (!t) { this.markers.setMarkers([]); return; }
+    this.markers.setMarkers([{ time: t, position: "belowBar", color: "#2962ff", shape: "arrowUp", text: "Ngày lọc" }]);
   }
 
   stop() {

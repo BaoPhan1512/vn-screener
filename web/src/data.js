@@ -191,12 +191,59 @@ async function refreshDnse(symbols, onProgress) {
 }
 
 // Ghép lịch sử + nến hôm nay thành chuỗi dữ liệu để tính chỉ báo
-export function barsFor(sym) {
+// Ngày giao dịch của từng nến (số ngày kể từ 1/1/1970), null nếu dữ liệu cũ chưa có
+export function daysOf(sym) {
   const h = store.history[sym];
+  if (!h || h.t0 == null || !h.dt) return null;
+  if (!h._days) {
+    const d = [h.t0];
+    for (const x of h.dt) d.push(d[d.length - 1] + x);
+    h._days = d;
+  }
+  return h._days;
+}
+
+export const dayToStr = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
+export const strToDay = (s) => Math.floor(Date.parse(s + "T00:00:00Z") / 86400000);
+
+// Lịch giao dịch (lấy từ mã có lịch sử dài nhất) dùng cho chọn ngày backtest
+export function tradingCalendar() {
+  if (store._calendar) return store._calendar;
+  let best = null;
+  for (const sym of Object.keys(store.history)) {
+    const d = daysOf(sym);
+    if (d && (!best || d.length > best.length)) best = d;
+  }
+  store._calendar = best || [];
+  return store._calendar;
+}
+
+// Vị trí nến cuối cùng có ngày <= asOf
+function indexAsOf(days, asOf) {
+  let lo = 0, hi = days.length - 1, ans = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (days[m] <= asOf) { ans = m; lo = m + 1; } else hi = m - 1;
+  }
+  return ans;
+}
+
+// Ghép lịch sử + nến hôm nay thành chuỗi dữ liệu để tính chỉ báo.
+// asOf (số ngày): cắt dữ liệu tại ngày đó để backtest, bỏ qua giá realtime.
+export function barsFor(sym, asOf = null) {
+  const h = store.history[sym];
+  if (asOf != null) {
+    const days = daysOf(sym);
+    if (!h || !days) return null;
+    const i = indexAsOf(days, asOf);
+    if (i < 1 || asOf - days[i] > 7) return null; // chưa niêm yết hoặc đang ngừng giao dịch
+    const n = i + 1;
+    return { c: h.c.slice(0, n), h: h.h.slice(0, n), l: h.l.slice(0, n), v: h.v.slice(0, n), o: h.o ? h.o.slice(0, n) : new Array(n).fill(null), idx: i };
+  }
   const lv = store.live[sym];
   if (!h && !lv) return null;
   const c = h ? h.c.slice() : [], hi = h ? h.h.slice() : [], lo = h ? h.l.slice() : [], v = h ? h.v.slice() : [];
-  const o = new Array(c.length).fill(null);
+  const o = h?.o ? h.o.slice() : new Array(c.length).fill(null);
   if (lv && !lv.noTrade) {
     const d = vnDate(lv.t);
     const lastD = h?.d;
@@ -209,6 +256,21 @@ export function barsFor(sym) {
     }
   }
   return { c, h: hi, l: lo, v, o };
+}
+
+// Lợi nhuận (%) sau k phiên kể từ nến idx; k = "now" là đến giá gần nhất
+export function forwardReturn(sym, idx, k) {
+  const h = store.history[sym];
+  if (!h) return null;
+  const base = h.c[idx];
+  if (!base) return null;
+  if (k === "now") {
+    const lv = store.live[sym];
+    const last = lv && !lv.noTrade && vnDate(lv.t) > h.d ? lv.c : h.c[h.c.length - 1];
+    return (last / base - 1) * 100;
+  }
+  const j = idx + k;
+  return j < h.c.length ? (h.c[j] / base - 1) * 100 : null;
 }
 
 export function lastDate(sym) {

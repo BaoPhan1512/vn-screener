@@ -36,6 +36,7 @@
         <button data-ex="HOSE">HOSE</button><button data-ex="HNX">HNX</button><button data-ex="UPCOM">UPCOM</button>
       </div>
       <button id="watchOnly" class="chip-btn" title="Chỉ hiện mã trong danh sách theo dõi">★ Theo dõi</button>
+      <button id="asOfBtn" class="chip-btn" title="Chọn ngày trong quá khứ để backtest bộ lọc">📅 Hôm nay</button>
       <div id="chips" class="chips"></div>
       <button id="addFilter" class="add-btn" title="Thêm điều kiện">＋</button>
     </section>
@@ -44,6 +45,7 @@
 
     <main class="split">
       <div class="table-wrap" id="tableWrap">
+        <div id="btSummary" class="bt-summary" hidden></div>
         <table class="grid" id="grid">
           <thead></thead>
           <tbody></tbody>

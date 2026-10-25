@@ -2,6 +2,11 @@
 // Một điều kiện: { left: {f, p}, op, right: {f, p} | {v}, right2?: {v}, off?: true }
 
 export function testFilter(ctx, flt) {
+  if (flt.op === "rising" || flt.op === "falling") {
+    const now = ctx.value(flt.left, 0), prev = ctx.value(flt.left, 1);
+    if (now == null || prev == null) return false;
+    return flt.op === "rising" ? now > prev : now < prev;
+  }
   const a = ctx.value(flt.left, 0);
   const b = ctx.value(flt.right, 0);
   if (a == null || b == null) return false;

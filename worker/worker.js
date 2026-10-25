@@ -109,6 +109,10 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
 
+    // Trang gốc chỉ báo trạng thái (không chứa dữ liệu) nên không cần mật khẩu
+    if (url.pathname === "/") {
+      return json({ ok: true, version: 3, locked: !!env.ACCESS_KEY, routes: ["/ohlc", "/snapshot", "/board"] });
+    }
     if (env.ACCESS_KEY && request.headers.get("X-Access-Key") !== env.ACCESS_KEY) {
       return json({ error: "Sai hoặc thiếu mật khẩu (X-Access-Key)" }, 401);
     }
@@ -123,7 +127,7 @@ export default {
       if (url.pathname === "/ohlc") res = await handleOhlc(url.searchParams);
       else if (url.pathname === "/snapshot") res = await handleSnapshot(url.searchParams);
       else if (url.pathname === "/board") res = await handleBoard(url.searchParams);
-      else return json({ ok: true, version: 3, locked: !!env.ACCESS_KEY, routes: ["/ohlc", "/snapshot", "/board"] });
+      else return json({ error: "Không có đường dẫn này" }, 404);
     } catch (e) {
       return json({ error: String(e.message || e) }, 502);
     }

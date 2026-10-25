@@ -47,7 +47,7 @@ Khoảng 5–15 phút sau, website có ở địa chỉ `https://<tên-github>.g
 Kiểm tra Worker: mở `https://vn-proxy.<tên-bạn>.workers.dev/snapshot?symbols=FPT,VNM` sẽ thấy dữ liệu giá.
 
 ### 3. Nhận tín hiệu qua Telegram (tuỳ chọn)
-GitHub tự lọc và gửi kết quả vào Telegram mỗi 30 phút: 9:15, 9:45, 10:15, 10:45, 11:15, 13:15, 13:45, 14:15 (thứ 2–6; GitHub có thể trễ vài phút).
+GitHub tự lọc và gửi kết quả vào Telegram mỗi 30 phút từ 9:00 đến 15:00, bỏ giờ nghỉ trưa (thứ 2–6, ngày lễ tự bỏ qua; GitHub có thể trễ vài phút).
 1. Trong Telegram, nhắn cho **@BotFather** lệnh `/newbot`, đặt tên → nhận **token** (dạng `123456:ABC...`).
 2. Nhắn một tin bất kỳ (vd `hi`) cho bot vừa tạo.
 3. Mở `https://api.telegram.org/bot<TOKEN>/getUpdates` → tìm `"chat":{"id":123456789` → đó là **chat id**.

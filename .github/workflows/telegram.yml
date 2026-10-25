@@ -1,14 +1,14 @@
 # Gửi tín hiệu lọc cổ phiếu về Telegram mỗi 30 phút trong phiên giao dịch.
-# Giờ Việt Nam (thứ 2 - thứ 6): 9:15, 9:45, 10:15, 10:45, 11:15, 13:15, 13:45, 14:15
-# (bỏ giờ nghỉ trưa 11:30-13:00). GitHub có thể chạy trễ vài phút.
+# Giờ Việt Nam (thứ 2 - thứ 6): 9:00, 9:30, 10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30, 15:00
+# (bỏ giờ nghỉ trưa; ngày lễ không có giao dịch thì script tự bỏ qua). GitHub có thể chạy trễ vài phút.
 # Danh sách bộ lọc cần gửi: file alerts.json ở thư mục gốc.
 name: Tín hiệu Telegram
 
 on:
   schedule:
     # giờ UTC = giờ VN - 7
-    - cron: "15,45 2,3,6 * * 1-5" # 9:15 9:45 10:15 10:45 13:15 13:45
-    - cron: "15 4,7 * * 1-5" # 11:15 14:15
+    - cron: "0,30 2,3,4,6,7 * * 1-5" # 9:00-11:30 và 13:00-14:30
+    - cron: "0 8 * * 1-5" # 15:00
   workflow_dispatch:
     inputs:
       force:

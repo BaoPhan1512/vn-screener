@@ -46,6 +46,18 @@ Khoảng 5–15 phút sau, website có ở địa chỉ `https://<tên-github>.g
 
 Kiểm tra Worker: mở `https://vn-proxy.<tên-bạn>.workers.dev/snapshot?symbols=FPT,VNM` sẽ thấy dữ liệu giá.
 
+### 3. Nhận tín hiệu qua Telegram (tuỳ chọn)
+GitHub tự lọc và gửi kết quả vào Telegram lúc 9:15, 10:15, 11:15, 13:15, 14:15 (thứ 2–6; GitHub có thể trễ vài phút).
+1. Trong Telegram, nhắn cho **@BotFather** lệnh `/newbot`, đặt tên → nhận **token** (dạng `123456:ABC...`).
+2. Nhắn một tin bất kỳ (vd `hi`) cho bot vừa tạo.
+3. Mở `https://api.telegram.org/bot<TOKEN>/getUpdates` → tìm `"chat":{"id":123456789` → đó là **chat id**.
+4. Repo GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+   `TELEGRAM_BOT_TOKEN` = token, `TELEGRAM_CHAT_ID` = chat id.
+5. Thử: tab **Actions** → "Tín hiệu Telegram" → **Run workflow** (tick "Gửi thử").
+
+Bộ lọc được gửi nằm trong file `alerts.json`. Có thể dán link "Chia sẻ" từ website vào, ví dụ
+`{ "name": "Bộ lọc của tôi", "share": "https://...#s=..." }`.
+
 ## Lưu ý
 
 - Nguồn dữ liệu là API công khai (không chính thức) của DNSE và VNDirect, chỉ dùng cho mục đích cá nhân. API có thể thay đổi.

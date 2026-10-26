@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: telegram
@@ -32,7 +33,21 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # Lịch của GitHub chỉ là dự phòng: nếu Cloudflare đã kích hoạt trong 20 phút qua thì bỏ qua để không gửi trùng
+      - name: Kiểm tra trùng lịch
+        id: dup
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          since=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?event=workflow_dispatch&created=%3E$since" --jq '.total_count' || echo 0)
+          n=${n:-0}
+          echo "Số lần Cloudflare/chạy tay trong 20 phút: $n"
+          if [ "$n" -gt 0 ]; then echo "skip=1" >> "$GITHUB_OUTPUT"; fi
+
       - name: Lọc và gửi Telegram
+        if: steps.dup.outputs.skip != '1'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

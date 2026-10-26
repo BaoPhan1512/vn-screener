@@ -211,7 +211,40 @@ async function handleBoard(params) {
 
 let ENV = null;
 
+// ---------------------------------------------------------------- hẹn giờ gửi Telegram (Cloudflare Cron)
+// GitHub hay chạy trễ / bỏ qua lịch hẹn, nên Cloudflare hẹn giờ rồi "bấm nút" chạy workflow Telegram.
+// Cần: Secret GH_TOKEN (GitHub fine-grained token, quyền Actions: Read and write cho repo này)
+//      + Cron Trigger "0,30 2-8 * * 1-5" (giờ UTC) trong Settings > Trigger Events.
+const GH_REPO = "BaoPhan1512/vn-screener";
+const GH_WORKFLOW = "telegram.yml";
+// Các mốc giờ Việt Nam được phép gửi (bỏ giờ nghỉ trưa)
+const SEND_TIMES = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "13:00", "13:30", "14:00", "14:30", "15:00"];
+
+async function dispatchTelegram(env, when) {
+  const vn = new Date(when + 7 * 3600 * 1000);
+  const hhmm = vn.toISOString().slice(11, 16);
+  const day = vn.getUTCDay();
+  if (day === 0 || day === 6 || !SEND_TIMES.includes(hhmm)) return `bỏ qua ${hhmm}`;
+  if (!env.GH_TOKEN) return "thiếu GH_TOKEN";
+  const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${GH_WORKFLOW}/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.GH_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "vn-proxy-cron",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  return r.status === 204 ? `đã gửi lệnh chạy lúc ${hhmm}` : `GitHub ${r.status}: ${(await r.text()).slice(0, 200)}`;
+}
+
 export default {
+  // Cloudflare gọi hàm này theo Cron Trigger
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatchTelegram(env, event.scheduledTime).then((m) => console.log("cron:", m)));
+  },
+
   async fetch(request, env, ctx) {
     ENV = env;
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -220,7 +253,7 @@ export default {
     // Trang gốc chỉ báo trạng thái (không chứa dữ liệu) nên không cần mật khẩu
     if (url.pathname === "/") {
       return json({
-        ok: true, version: 6, locked: !!env.ACCESS_KEY, official: official(env),
+        ok: true, version: 7, cron: !!env.GH_TOKEN, locked: !!env.ACCESS_KEY, official: official(env),
         restOfficial: official(env) && Date.now() > officialDownUntil, restError: officialLastError || undefined,
         routes: ["/ohlc", "/snapshot", "/board", "/ws-auth", "/presign"],
       });

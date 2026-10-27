@@ -1,18 +1,24 @@
 # Gửi tín hiệu lọc cổ phiếu về Telegram mỗi 30 phút trong phiên giao dịch.
-# Giờ Việt Nam (thứ 2 - thứ 6): 9:03, 9:33, 10:03 … 11:33, 13:03 … 14:33, 15:03
-# (bỏ giờ nghỉ trưa; ngày lễ không có giao dịch thì script tự bỏ qua). GitHub có thể chạy trễ vài phút.
+# Giờ Việt Nam (thứ 2 - thứ 6): 9:00, 9:30 … 11:30, 13:00 … 15:00 (bỏ nghỉ trưa; ngày lễ script tự bỏ qua).
+# Lịch hẹn của GitHub hay trễ / bỏ lượt, nên mỗi phiên chỉ cần GitHub "đánh thức" MỘT lần (có nhiều lần dự phòng
+# trước giờ mở cửa); lượt chạy đó tự chờ và gửi đúng từng mốc giờ. Lượt dự phòng tới sau thấy đã có lượt chạy thì thoát.
 # Danh sách bộ lọc cần gửi: file alerts.json ở thư mục gốc.
 name: Tín hiệu Telegram
 
 on:
   schedule:
-    # giờ UTC = giờ VN - 7. Lệch 3 phút khỏi giờ tròn vì GitHub hay bỏ qua lịch đúng :00 / :30
-    - cron: "3,33 2,3,4,6,7 * * 1-5" # 9:03-11:33 và 13:03-14:33
-    - cron: "3 8 * * 1-5" # 15:03
+    # giờ UTC = giờ VN - 7
+    - cron: "17,37,52 1 * * 1-5" # phiên sáng: thức dậy 8:17 / 8:37 / 8:52
+    - cron: "7,22,47 2,3 * * 1-5" # dự phòng nếu GitHub bỏ các lượt trên
+    - cron: "27,42,57 5 * * 1-5" # phiên chiều: thức dậy 12:27 / 12:42 / 12:57
+    - cron: "12,37 6,7 * * 1-5" # dự phòng phiên chiều
+  push:
+    branches: [main]
+    paths: [".github/workflows/telegram.yml", "alerts.json"]
   workflow_dispatch:
     inputs:
       force:
-        description: "Gửi thử cả khi không có phiên giao dịch"
+        description: "Gửi thử ngay (cả khi không có phiên giao dịch)"
         type: boolean
         default: false
 
@@ -20,12 +26,10 @@ permissions:
   contents: read
   actions: read
 
-concurrency:
-  group: telegram
-  cancel-in-progress: false
-
 jobs:
-  alert:
+  # Chạy tay (hoặc Cloudflare bấm nút): gửi một lần ngay
+  once:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,19 +37,19 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      # Lịch của GitHub chỉ là dự phòng: nếu Cloudflare đã kích hoạt trong 20 phút qua thì bỏ qua để không gửi trùng
-      - name: Kiểm tra trùng lịch
+      - name: Kiểm tra trùng với lượt tự động
         id: dup
-        if: github.event_name == 'schedule'
+        if: ${{ !inputs.force }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          since=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          n=$(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?event=workflow_dispatch&created=%3E$since" --jq '.total_count' || echo 0)
-          n=${n:-0}
-          echo "Số lần Cloudflare/chạy tay trong 20 phút: $n"
-          if [ "$n" -gt 0 ]; then echo "skip=1" >> "$GITHUB_OUTPUT"; fi
-
+          # Đang có lượt tự động canh giờ và bây giờ sát mốc gửi -> lượt kia sẽ gửi, bỏ qua để không trùng
+          n=$(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?status=in_progress" \
+              --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }} and .event != \"workflow_dispatch\")] | length" || echo 0)
+          m=$(TZ=Asia/Ho_Chi_Minh date +%-M)
+          if [ "${n:-0}" -gt 0 ] && { [ "$m" -le 5 ] || { [ "$m" -ge 25 ] && [ "$m" -le 35 ]; } || [ "$m" -ge 55 ]; }; then
+            echo "Lượt tự động đang chạy sẽ gửi mốc này, bỏ qua."; echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
       - name: Lọc và gửi Telegram
         if: steps.dup.outputs.skip != '1'
         env:
@@ -54,3 +58,50 @@ jobs:
           WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
           WORKER_KEY: ${{ secrets.WORKER_KEY }}
         run: node scripts/alert.mjs ${{ inputs.force && '--force' || '' }}
+
+  # Lịch hẹn: canh giờ và gửi từng mốc của phiên (sáng hoặc chiều)
+  loop:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Đã có lượt khác đang canh giờ?
+        id: dup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?status=in_progress" \
+              --jq "[.workflow_runs[] | select(.id < ${{ github.run_id }} and .event != \"workflow_dispatch\")] | length" || echo 0)
+          echo "Lượt khác đang chạy: ${n:-0}"
+          if [ "${n:-0}" -gt 0 ]; then echo "skip=1" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v5
+        if: steps.dup.outputs.skip != '1'
+      - uses: actions/setup-node@v5
+        if: steps.dup.outputs.skip != '1'
+        with:
+          node-version: 22
+      - name: Canh giờ và gửi Telegram
+        if: steps.dup.outputs.skip != '1'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
+          WORKER_KEY: ${{ secrets.WORKER_KEY }}
+        run: |
+          export TZ=Asia/Ho_Chi_Minh
+          dow=$(date +%u); if [ "$dow" -gt 5 ]; then echo "Cuối tuần, không gửi."; exit 0; fi
+          sent=0
+          for s in 09:00 09:30 10:00 10:30 11:00 11:30 13:00 13:30 14:00 14:30 15:00; do
+            t=$(date -d "today $s" +%s); now=$(date +%s)
+            if [ "$now" -gt $((t + 20*60)) ]; then continue; fi          # mốc đã qua quá 20 phút
+            wait=$((t - now))
+            if [ "$wait" -gt 4500 ]; then                                 # còn xa (nghỉ trưa) -> lượt chiều lo
+              echo "Mốc $s còn xa, để lượt sau gửi."; break
+            fi
+            if [ "$wait" -gt 0 ]; then echo "Chờ tới $s ($wait giây)…"; sleep "$wait"; fi
+            echo "::group::Gửi mốc $s"
+            node scripts/alert.mjs || echo "::warning::Lỗi khi gửi mốc $s"
+            echo "::endgroup::"
+            sent=$((sent + 1))
+          done
+          echo "Đã chạy $sent mốc."

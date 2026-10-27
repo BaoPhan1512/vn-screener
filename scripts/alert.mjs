@@ -83,10 +83,49 @@ async function loadLive(symbols) {
     }
   }
   await Promise.all(Array.from({ length: 4 }, worker));
+  await patchToday(raw);
   // Ghi chú lên mục Annotations của GitHub để dễ biết nguyên nhân
   if (lastErr.includes("401")) note("warning", "Worker từ chối mật khẩu (401): secret WORKER_KEY trên GitHub chưa khớp với ACCESS_KEY của Worker. Đang dùng dữ liệu cuối ngày thay cho giá realtime.");
   else if (failed) note("warning", `Không lấy được giá realtime của ${failed} mã: ${lastErr}`);
   return { raw, failed };
+}
+
+// Nguồn DNSE đôi khi chưa tạo "nến ngày" của hôm nay trong phiên (nến ngày mới nhất vẫn là hôm qua).
+// Khi đó dựng nến hôm nay từ nến 1 phút: mở = nến đầu, cao/thấp = max/min, đóng = nến cuối, KL = tổng.
+async function patchToday(raw) {
+  const today = todayVN();
+  const stale = Object.keys(raw).filter((s) => raw[s].t && !raw[s].error && vnDate(raw[s].t) < today);
+  if (!stale.length) return;
+  const start = Math.floor(Date.parse(today + "T00:00:00+07:00") / 1000);
+  const intraday = async (s) => {
+    const d = await getJson(`${WORKER}/ohlc?symbol=${s}&resolution=1&from=${start}&to=${start + 86400}`, 2);
+    const idx = (d.t || []).map((t, i) => (t >= start ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return null;
+    return {
+      t: d.t[idx[0]], o: d.o[idx[0]], c: d.c[idx.at(-1)],
+      h: Math.max(...idx.map((i) => d.h[i])), l: Math.min(...idx.map((i) => d.l[i])),
+      v: idx.reduce((a, i) => a + (d.v[i] || 0), 0),
+    };
+  };
+  // Thử với vài mã thanh khoản cao: không có nến 1 phút hôm nay => hôm nay nghỉ giao dịch thật
+  let open = false;
+  for (const s of ["FPT", "SSI", "HPG", "VNM"]) {
+    try { if (await intraday(s)) { open = true; break; } } catch {}
+  }
+  if (!open) return;
+  note("notice", `Nến ngày hôm nay chưa có ở ${stale.length} mã: đang dựng từ nến 1 phút.`);
+  let next = 0, fixed = 0;
+  async function worker() {
+    while (next < stale.length) {
+      const s = stale[next++];
+      try {
+        const bar = await intraday(s);
+        if (bar) { raw[s] = { ...bar, pc: raw[s].c }; fixed++; }
+      } catch {}
+    }
+  }
+  await Promise.all(Array.from({ length: 8 }, worker));
+  log(`Đã dựng nến hôm nay cho ${fixed}/${stale.length} mã`);
 }
 
 function mergeBars(h, lv) {
@@ -168,7 +207,7 @@ async function main() {
     if (d > latest) latest = d;
   }
   if (!FORCE && latest !== todayVN()) {
-    log(`Hôm nay (${todayVN()}) không có giao dịch (phiên gần nhất ${latest || "?"}), không gửi.`);
+    note("warning", `Hôm nay (${todayVN()}) không thấy dữ liệu giao dịch (phiên gần nhất ${latest || "?"}), không gửi.`);
     return;
   }
 

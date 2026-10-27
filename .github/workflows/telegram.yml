@@ -14,7 +14,7 @@ on:
     - cron: "12,37 6,7 * * 1-5" # dự phòng phiên chiều
   push:
     branches: [main]
-    paths: [".github/workflows/telegram.yml", "alerts.json"]
+    paths: [".github/workflows/telegram.yml", "alerts.json", "scripts/alert.mjs"]
   workflow_dispatch:
     inputs:
       force:
@@ -24,7 +24,7 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  actions: write # để lượt mới (khi cập nhật code) dừng lượt cũ đang canh giờ
 
 jobs:
   # Chạy tay (hoặc Cloudflare bấm nút): gửi một lần ngay
@@ -70,6 +70,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Vừa cập nhật code: dừng lượt cũ đang canh giờ, lượt này chạy thay bằng code mới
+            for id in $(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?status=in_progress" \
+                --jq ".workflow_runs[] | select(.id < ${{ github.run_id }} and .event != \"workflow_dispatch\") | .id"); do
+              echo "Dừng lượt cũ $id"; gh api -X POST "repos/${{ github.repository }}/actions/runs/$id/cancel" || true
+            done
+            exit 0
+          fi
           n=$(gh api "repos/${{ github.repository }}/actions/workflows/telegram.yml/runs?status=in_progress" \
               --jq "[.workflow_runs[] | select(.id < ${{ github.run_id }} and .event != \"workflow_dispatch\")] | length" || echo 0)
           echo "Lượt khác đang chạy: ${n:-0}"

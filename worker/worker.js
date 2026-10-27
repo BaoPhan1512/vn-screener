@@ -220,11 +220,11 @@ const GH_WORKFLOW = "telegram.yml";
 // Các mốc giờ Việt Nam được phép gửi (bỏ giờ nghỉ trưa)
 const SEND_TIMES = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "13:00", "13:30", "14:00", "14:30", "15:00"];
 
-async function dispatchTelegram(env, when) {
+async function dispatchTelegram(env, when, force = false) {
   const vn = new Date(when + 7 * 3600 * 1000);
   const hhmm = vn.toISOString().slice(11, 16);
   const day = vn.getUTCDay();
-  if (day === 0 || day === 6 || !SEND_TIMES.includes(hhmm)) return `bỏ qua ${hhmm}`;
+  if (!force && (day === 0 || day === 6 || !SEND_TIMES.includes(hhmm))) return `bỏ qua ${hhmm}`;
   if (!env.GH_TOKEN) return "thiếu GH_TOKEN";
   const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${GH_WORKFLOW}/dispatches`, {
     method: "POST",
@@ -253,10 +253,15 @@ export default {
     // Trang gốc chỉ báo trạng thái (không chứa dữ liệu) nên không cần mật khẩu
     if (url.pathname === "/") {
       return json({
-        ok: true, version: 7, cron: !!env.GH_TOKEN, locked: !!env.ACCESS_KEY, official: official(env),
+        ok: true, version: 8, cron: !!env.GH_TOKEN, locked: !!env.ACCESS_KEY, official: official(env),
         restOfficial: official(env) && Date.now() > officialDownUntil, restError: officialLastError || undefined,
-        routes: ["/ohlc", "/snapshot", "/board", "/ws-auth", "/presign"],
+        routes: ["/ohlc", "/snapshot", "/board", "/ws-auth", "/presign", "/cron-test"],
       });
+    }
+    // Thử "bấm nút" chạy Telegram ngay bằng trình duyệt: /cron-test?key=MẬT_KHẨU
+    if (url.pathname === "/cron-test") {
+      if (env.ACCESS_KEY && url.searchParams.get("key") !== env.ACCESS_KEY) return json({ error: "Sai mật khẩu (?key=)" }, 401);
+      return json({ result: await dispatchTelegram(env, Date.now(), true) });
     }
     if (env.ACCESS_KEY && request.headers.get("X-Access-Key") !== env.ACCESS_KEY) {
       return json({ error: "Sai hoặc thiếu mật khẩu (X-Access-Key)" }, 401);

@@ -57,7 +57,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           WORKER_URL: https://vn-proxy.phanvubao-bkdn.workers.dev
           WORKER_KEY: ${{ secrets.WORKER_KEY }}
-        run: node scripts/alert.mjs ${{ inputs.force && '--force' || '' }}
+        run: node scripts/alert.mjs ${{ inputs.force && '--force' || '' }} || [ $? -eq 3 ]
 
   # Lịch hẹn: canh giờ và gửi từng mốc của phiên (sáng hoặc chiều)
   loop:
@@ -108,8 +108,20 @@ jobs:
             fi
             if [ "$wait" -gt 0 ]; then echo "Chờ tới $s ($wait giây)…"; sleep "$wait"; fi
             echo "::group::Gửi mốc $s"
-            node scripts/alert.mjs || echo "::warning::Lỗi khi gửi mốc $s"
+            # Chưa có giá hôm nay (vd phiên ATO 9:00-9:15): thử lại mỗi phút, tối đa 25 phút
+            tries=0
+            while :; do
+              code=0; node scripts/alert.mjs || code=$?
+              if [ "$code" != 3 ]; then break; fi
+              tries=$((tries + 1))
+              if [ "$tries" -ge 25 ]; then break; fi
+              echo "Chưa có giá hôm nay, thử lại sau 1 phút ($tries)…"; sleep 60
+            done
             echo "::endgroup::"
-            sent=$((sent + 1))
+            if [ "$code" = 3 ]; then
+              if [ "$sent" -eq 0 ]; then echo "::warning::Mốc $s: 25 phút vẫn chưa có giá giao dịch hôm nay, coi như nghỉ giao dịch."; exit 0; fi
+              echo "::warning::Mốc $s: không lấy được giá hôm nay, bỏ qua mốc này."
+            elif [ "$code" != 0 ]; then echo "::warning::Lỗi khi gửi mốc $s (mã $code)"
+            else sent=$((sent + 1)); fi
           done
           echo "Đã chạy $sent mốc."

@@ -207,7 +207,10 @@ async function main() {
     if (d > latest) latest = d;
   }
   if (!FORCE && latest !== todayVN()) {
-    note("warning", `Hôm nay (${todayVN()}) không thấy dữ liệu giao dịch (phiên gần nhất ${latest || "?"}), không gửi.`);
+    // 9:00-9:15 là phiên ATO (chưa khớp lệnh) nên chưa có giá hôm nay. Mã thoát 3 = "chưa có dữ liệu",
+    // workflow sẽ thử lại sau 1 phút; nếu mãi không có thì hôm nay nghỉ giao dịch.
+    log(`Hôm nay (${todayVN()}) chưa có dữ liệu giao dịch (phiên gần nhất ${latest || "?"}), chưa gửi.`);
+    process.exitCode = 3;
     return;
   }
 
